@@ -447,7 +447,9 @@ fn remove_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
             .as_array_mut()
             .ok_or("hook event must be an array")?;
         let mut remaining_groups = Vec::with_capacity(groups.len());
+        let mut event_changed = false;
         for mut group in groups.drain(..) {
+            let mut group_changed = false;
             let remove_group = if let Some(group_object) = group.as_object_mut() {
                 if let Some(group_hooks_value) = group_object.get_mut("hooks") {
                     let group_hooks = group_hooks_value
@@ -456,30 +458,30 @@ fn remove_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
                     let original_len = group_hooks.len();
                     group_hooks.retain(|hook| !is_session_artifacts_hook(hook, provider));
                     if group_hooks.len() != original_len {
+                        group_changed = true;
                         changed = true;
                     }
-                    group_hooks.is_empty()
+                    group_changed && group_hooks.is_empty()
                 } else {
                     false
                 }
             } else {
                 false
             };
-            if remove_group {
-                changed = true;
-            } else {
+            if group_changed {
+                event_changed = true;
+            }
+            if !remove_group {
                 remaining_groups.push(group);
             }
         }
         *groups = remaining_groups;
-        if groups.is_empty() {
+        if event_changed && groups.is_empty() {
             hooks.remove(&event_name);
-            changed = true;
         }
     }
     if hooks.is_empty() {
         root.remove("hooks");
-        changed = true;
     }
     if changed {
         write_if_changed(path, &serde_json::to_string_pretty(&settings)?)?;
@@ -498,8 +500,22 @@ fn is_session_artifacts_hook(value: &Value, provider: &Provider) -> bool {
         return false;
     };
     let suffix = format!(" hook --provider {}", provider.as_str());
-    command.ends_with(&suffix)
-        && (command.contains("session-artifacts") || command.contains("session_artifacts"))
+    let Some(executable) = command.strip_suffix(&suffix).map(str::trim) else {
+        return false;
+    };
+    let executable = executable
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+        .or_else(|| {
+            executable
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+        })
+        .unwrap_or(executable);
+    matches!(
+        executable.rsplit(['/', '\\']).next(),
+        Some("session-artifacts" | "session_artifacts")
+    )
 }
 
 fn enable_codex_hooks(path: &Path) -> Result<bool> {
@@ -667,6 +683,87 @@ mod tests {
             settings["hooks"]["SessionStart"][0]["hooks"][0]["type"],
             "command"
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn uninstall_removes_only_session_artifacts_hook_entries() {
+        let path = std::env::temp_dir().join(format!(
+            "session-artifacts-selective-uninstall-test-{}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let settings = json!({
+            "other_setting": true,
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "matcher": "startup",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "'/tmp/session-artifacts' hook --provider codex"
+                            },
+                            {
+                                "type": "command",
+                                "command": "other-hook --provider codex"
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": "empty-but-unrelated",
+                        "hooks": []
+                    }
+                ],
+                "UserPromptSubmit": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "'/tmp/session-artifacts' hook --provider codex"
+                            }
+                        ]
+                    }
+                ],
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "other-tool session-artifacts hook --provider codex"
+                            }
+                        ]
+                    }
+                ],
+                "Notification": []
+            }
+        });
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&settings).expect("serialize hooks"),
+        )
+        .expect("write hooks");
+
+        assert!(remove_provider_hooks(&path, &Provider::Codex).expect("remove hooks"));
+        let settings: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read hooks"))
+            .expect("valid hooks JSON");
+        assert_eq!(settings["other_setting"], true);
+        assert_eq!(
+            settings["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "other-hook --provider codex"
+        );
+        assert_eq!(
+            settings["hooks"]["SessionStart"].as_array().unwrap().len(),
+            2
+        );
+        assert!(settings["hooks"].get("UserPromptSubmit").is_none());
+        assert_eq!(
+            settings["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "other-tool session-artifacts hook --provider codex"
+        );
+        assert!(settings["hooks"].get("Notification").unwrap().is_array());
+        assert!(!remove_provider_hooks(&path, &Provider::Codex).expect("second removal"));
+
         let _ = fs::remove_file(path);
     }
 
