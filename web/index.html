@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Session Artifacts</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#eef2f5; --sidebar:#18212a; --sidebar-text:#e9eff4; --sidebar-muted:#9ba9b5; --line:rgba(255,255,255,.12); --accent:#73b7e8; --content:#f7f9fa; --text:#1a242d; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#101418; --sidebar:#151b20; --content:#101418; --text:#edf2f6; } }
+    * { box-sizing:border-box; }
+    html, body { height:100%; margin:0; }
+    body { color:var(--text); background:var(--bg); font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .shell { display:grid; grid-template-columns:320px minmax(0,1fr); height:100%; }
+    .sidebar { display:flex; flex-direction:column; min-width:0; color:var(--sidebar-text); background:var(--sidebar); }
+    .brand { padding:24px 22px 20px; border-bottom:1px solid var(--line); }
+    .brand small { display:block; color:var(--accent); font-size:.68rem; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
+    .brand h1 { margin:7px 0 0; font-size:1.2rem; letter-spacing:-.02em; }
+    .sessions { flex:1; overflow:auto; padding:16px 10px; }
+    .group { margin:0 0 18px; }
+    .group-title { padding:0 10px 7px; color:var(--sidebar-muted); font-size:.72rem; font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .session { width:100%; display:block; border:0; border-radius:10px; padding:11px 10px; text-align:left; color:inherit; background:transparent; cursor:pointer; }
+    .session:hover, .session.active { background:rgba(255,255,255,.10); }
+    .session-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.91rem; font-weight:650; }
+    .session-meta { display:flex; gap:7px; margin-top:4px; color:var(--sidebar-muted); font-size:.72rem; }
+    .empty-side { padding:18px 10px; color:var(--sidebar-muted); font-size:.85rem; line-height:1.55; }
+    .footer { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 16px; border-top:1px solid var(--line); color:var(--sidebar-muted); font-size:.72rem; }
+    .footer button { border:1px solid var(--line); border-radius:7px; padding:5px 9px; color:inherit; background:transparent; cursor:pointer; }
+    .content { position:relative; min-width:0; background:var(--content); }
+    #artifact { display:none; width:100%; height:100%; border:0; background:var(--content); }
+    .welcome { display:grid; place-items:center; height:100%; padding:30px; text-align:center; }
+    .welcome-inner { max-width:540px; }
+    .welcome h2 { margin:0 0 10px; font-size:1.9rem; letter-spacing:-.04em; }
+    .welcome p { margin:0; color:#70808c; line-height:1.65; }
+    @media (max-width:760px) { .shell { grid-template-columns:230px minmax(0,1fr); } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <header class="brand">
+        <small>Live workspace</small>
+        <h1>Session Artifacts</h1>
+      </header>
+      <nav id="sessions" class="sessions" aria-label="Active sessions"></nav>
+      <footer class="footer"><span id="status">connecting…</span><button id="refresh" type="button">Refresh</button></footer>
+    </aside>
+    <main class="content">
+      <section id="welcome" class="welcome">
+        <div class="welcome-inner">
+          <h2>Nothing is active yet</h2>
+          <p>When an agent opens a session artifact, it will appear here. Select a session from the sidebar to follow its live HTML view.</p>
+        </div>
+      </section>
+      <iframe id="artifact" title="Session artifact"></iframe>
+    </main>
+  </div>
+  <script>
+    const sessionList = document.querySelector('#sessions');
+    const frame = document.querySelector('#artifact');
+    const welcome = document.querySelector('#welcome');
+    const status = document.querySelector('#status');
+    let sessions = [];
+    let selected = null;
+    let selectedVersion = null;
+
+    function esc(value) {
+      return String(value).replace(/[&<>'"]/g, function(c) {
+        return {'&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'}[c];
+      });
+    }
+
+    function groupKey(path) { return path || '(unknown cwd)'; }
+
+    function renderSessions() {
+      if (!sessions.length) {
+        sessionList.innerHTML = '<div class="empty-side">No active session artifacts.</div>';
+        return;
+      }
+      const groups = new Map();
+      for (const session of sessions) {
+        const key = groupKey(session.cwd);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(session);
+      }
+      const sections = [];
+      for (const entry of groups.entries()) {
+        const cwd = entry[0];
+        const items = entry[1];
+        const buttons = items.map(function(s) {
+          return '<button class="session ' + (s.key === selected ? 'active' : '') + '" data-key="' + esc(s.key) + '">' +
+            '<div class="session-title">' + esc(s.title || 'Untitled session') + '</div>' +
+            '<div class="session-meta"><span>' + esc(s.provider) + '</span><span>' + esc(s.session_id.slice(0, 8)) + '</span></div>' +
+            '</button>';
+        }).join('');
+        sections.push('<section class="group"><div class="group-title" title="' + esc(cwd) + '">' + esc(cwd) + '</div>' + buttons + '</section>');
+      }
+      sessionList.innerHTML = sections.join('');
+      sessionList.querySelectorAll('.session').forEach(function(button) {
+        button.addEventListener('click', function() { select(button.dataset.key); });
+      });
+    }
+
+    async function loadSessions() {
+      try {
+        const response = await fetch('/api/sessions', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        sessions = await response.json();
+        status.textContent = sessions.length + ' active';
+        renderSessions();
+        if (selected && !sessions.some(function(s) { return s.key === selected; })) {
+          selected = null;
+          selectedVersion = null;
+          frame.style.display = 'none';
+          welcome.style.display = 'grid';
+        }
+      } catch (error) {
+        status.textContent = 'disconnected';
+      }
+    }
+
+    async function select(key) {
+      selected = key;
+      selectedVersion = null;
+      frame.src = '/session/' + encodeURIComponent(key) + '?t=' + Date.now();
+      frame.style.display = 'block';
+      welcome.style.display = 'none';
+      renderSessions();
+      await checkVersion(true);
+    }
+
+    async function checkVersion(force) {
+      if (!selected) return;
+      try {
+        const response = await fetch('/api/sessions/' + encodeURIComponent(selected) + '/version', { cache: 'no-store' });
+        if (!response.ok) return;
+        const version = await response.text();
+        if (force || (selectedVersion && selectedVersion !== version)) {
+          frame.src = '/session/' + encodeURIComponent(selected) + '?t=' + Date.now();
+        }
+        selectedVersion = version;
+      } catch (_) {}
+    }
+
+    document.querySelector('#refresh').addEventListener('click', loadSessions);
+    loadSessions();
+    setInterval(loadSessions, 1500);
+    setInterval(function() { checkVersion(false); }, 700);
+  </script>
+</body>
+</html>
