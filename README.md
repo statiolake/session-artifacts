@@ -27,6 +27,14 @@ Install one provider explicitly when needed:
     session-artifacts install --provider claude
     session-artifacts install --provider codex
 
+Remove the global integrations when they are no longer wanted:
+
+    session-artifacts uninstall
+
+Uninstall removes the session-artifacts skill files and only the matching
+session-artifacts hook entries. It preserves unrelated provider settings. The
+Codex hook feature flag is retained so other Codex hooks are not disabled.
+
 ## Session workflow
 
 The agent runs this command when a session starts or when the artifact is needed:

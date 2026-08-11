@@ -76,6 +76,12 @@ enum Command {
         #[arg(long, value_enum)]
         provider: Option<ProviderArg>,
     },
+    /// Remove provider-specific global skills and hooks.
+    Uninstall {
+        /// Uninstall for both supported providers when omitted.
+        #[arg(long, value_enum)]
+        provider: Option<ProviderArg>,
+    },
     /// Emit hook context for a provider. Reads provider event JSON from stdin.
     Hook {
         #[arg(long, value_enum)]
@@ -181,6 +187,11 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
         Command::Install { provider } => {
             let result = install::install(provider.map(Into::into))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
+        Command::Uninstall { provider } => {
+            let result = install::uninstall(provider.map(Into::into))?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             Ok(())
         }
