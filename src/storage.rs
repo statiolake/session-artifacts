@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 
-use crate::model::{OpenRequest, Provider, Registry, SessionRecord, SessionSummary};
+use crate::model::{Provider, Registry, SessionRecord, SessionRequest, SessionSummary};
 use crate::template;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -140,7 +140,7 @@ fn migrate_legacy_cwd(cwd: &Path) -> Option<PathBuf> {
 
 pub fn prepare_artifact(
     registry: &mut Registry,
-    request: &OpenRequest,
+    request: &SessionRequest,
 ) -> Result<(SessionRecord, Option<String>)> {
     if request.session_id.trim().is_empty() {
         return Err("session_id must not be empty".into());
@@ -203,7 +203,7 @@ pub fn prepare_artifact(
     Ok((record, warning))
 }
 
-pub fn mark_closed(registry: &mut Registry, request: &OpenRequest) -> bool {
+pub fn mark_closed(registry: &mut Registry, request: &SessionRequest) -> bool {
     if let Some(record) = registry.sessions.iter_mut().find(|record| {
         record.provider == request.provider
             && record.session_id == request.session_id
@@ -217,9 +217,9 @@ pub fn mark_closed(registry: &mut Registry, request: &OpenRequest) -> bool {
     }
 }
 
-pub fn delete_record(
+pub fn clean_record(
     registry: &mut Registry,
-    request: &OpenRequest,
+    request: &SessionRequest,
 ) -> Result<Option<SessionRecord>> {
     let Some(index) = registry.sessions.iter().position(|record| {
         record.provider == request.provider
@@ -455,7 +455,7 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&cwd);
-        let request = OpenRequest {
+        let request = SessionRequest {
             provider: Provider::Codex,
             session_id: "legacy-session".to_string(),
             cwd: cwd.clone(),
@@ -528,7 +528,7 @@ mod tests {
         fs::create_dir_all(absolute_path.parent().expect("artifact parent"))
             .expect("create artifact parent");
         fs::write(&absolute_path, "<!doctype html>").expect("write artifact");
-        let request = OpenRequest {
+        let request = SessionRequest {
             provider: Provider::Codex,
             session_id: "delete-test".to_string(),
             cwd: cwd.clone(),
@@ -545,7 +545,7 @@ mod tests {
                 updated_at: now(),
             }],
         };
-        let deleted = delete_record(&mut registry, &request)
+        let deleted = clean_record(&mut registry, &request)
             .expect("delete record")
             .expect("record exists");
         assert_eq!(deleted.session_id, "delete-test");

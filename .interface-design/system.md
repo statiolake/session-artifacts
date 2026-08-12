@@ -3,7 +3,8 @@
 ## Direction
 
 - Human: a developer following several live agent sessions while investigating a problem.
-- Job: identify the active session and recover the current focus in one glance.
+- Job: explain the current technical subject so its necessary relationships can
+  be recovered in one glance.
 - Feel: a compact physical whiteboard on a developer's desk — bright paper,
   graphite notation, smart, quiet, practical, and slightly editorial rather
   than a generic SaaS dashboard.
@@ -16,9 +17,10 @@
 
 The visual vocabulary comes from paper, marker strokes, margin notes, session IDs,
 cwd breadcrumbs, focus anchors, branching questions, live reload, and a sheet of
-notes beside a terminal. The signature is a focus field with marginalia: the
-current topic occupies the broad paper surface while identity, source references,
-and secondary branches stay legible but quiet in a narrow margin.
+notes beside a terminal. The signature is an explanation field with marginalia:
+the subject being explained occupies the broad paper surface while identity,
+source references, and secondary branches stay legible but quiet in a narrow
+margin.
 
 ## Tokens
 
@@ -46,11 +48,18 @@ panels, gradients, or decorative card borders.
 - The viewer is a 272px navigation rail plus a fluid whiteboard pane. The rail
   serves the board; it must not become a second competing canvas.
 - Keep the viewer chrome at roughly 48px high and use 8px internal controls.
-- The whiteboard has one dominant focus and no equal grid of generic cards. Use
-  a broad focus field plus a narrow annotation margin; group related anchors
+- Keep session rows compact at roughly 40–42px with 4–8px vertical group
+  rhythm. Do not add decorative status bullets to every row; the left marker is
+  reserved for meaningful unread state, with row actions kept on the right.
+- The whiteboard has one broad explanation field and no equal grid of generic
+  cards. Use a narrow annotation margin when it helps; group related anchors
   tightly, then use a deliberate larger gap between topics. Keep the normal
   state compact, but allow the paper to scroll when the alternative is hidden
   or overlapping content.
+- A title and visible heading should name the subject plainly. Do not turn the
+  sheet into a presentation cover with a slogan, manifesto, or oversized hero
+  phrase. Information density and relationships matter more than theatrical
+  emphasis.
 - Prefer weight and tone over large type. Use 10px tracked labels, 12px body,
   13–16px section/value hierarchy, and tabular numbers for IDs and counters.
 - Favor native semantic controls and visible focus states. A compact button is
@@ -72,9 +81,10 @@ is unavailable.
 ## Whiteboard composition
 
 The sheet is the product surface, not a dashboard card grid. Use a warm paper
-surface (`--paper`) with a single focus field, a vertical marker rail or other
-strong focal edge, and marginalia for anchors/status. The margin may contain
-compact notes and copy actions, but it must not become a second equal canvas.
+surface (`--paper`) with a broad explanation field, a vertical marker rail or
+other restrained focal edge, and marginalia for anchors/status. The margin may
+contain compact notes and copy actions, but it must not become a second equal
+canvas.
 The default split is approximately 72/28 rather than three equal columns.
 
 ## Provenance

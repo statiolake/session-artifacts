@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::model::{
-    CloseResponse, DaemonInfo, DeleteResponse, HealthResponse, OpenRequest, OpenResponse, Registry,
-    SessionRecord,
+    BrowseResponse, CleanResponse, CloseResponse, DaemonInfo, HealthResponse, PrepareResponse,
+    Registry, SessionRecord, SessionRequest,
 };
 use crate::storage;
 
@@ -33,6 +33,7 @@ struct AppState {
 #[derive(Default)]
 struct EventHub {
     clients: Mutex<Vec<Sender<Value>>>,
+    active_viewers: Mutex<usize>,
     last_viewer_seen: Mutex<Option<Instant>>,
 }
 
@@ -45,15 +46,10 @@ impl EventHub {
         if let Ok(mut clients) = self.clients.lock() {
             clients.push(sender);
         }
+        if let Ok(mut active_viewers) = self.active_viewers.lock() {
+            *active_viewers += 1;
+        }
         receiver
-    }
-
-    fn viewer_is_recent(&self) -> bool {
-        self.last_viewer_seen
-            .lock()
-            .ok()
-            .and_then(|last_seen| *last_seen)
-            .is_some_and(|last_seen| last_seen.elapsed() < Duration::from_secs(35))
     }
 
     fn viewer_has_been_seen(&self) -> bool {
@@ -63,8 +59,28 @@ impl EventHub {
             .is_some_and(|last_seen| last_seen.is_some())
     }
 
+    fn viewer_is_connected(&self) -> bool {
+        let active = self
+            .active_viewers
+            .lock()
+            .is_ok_and(|active_viewers| *active_viewers > 0);
+        active
+            || self
+                .last_viewer_seen
+                .lock()
+                .ok()
+                .and_then(|last_seen| *last_seen)
+                .is_some_and(|last_seen| last_seen.elapsed() < Duration::from_secs(6))
+    }
+
     fn should_open_browser(&self, browser_opened: bool) -> bool {
-        !browser_opened || (self.viewer_has_been_seen() && !self.viewer_is_recent())
+        !browser_opened || (self.viewer_has_been_seen() && !self.viewer_is_connected())
+    }
+
+    fn disconnect_viewer(&self) {
+        if let Ok(mut active_viewers) = self.active_viewers.lock() {
+            *active_viewers = active_viewers.saturating_sub(1);
+        }
     }
 
     fn publish(&self, payload: Value) {
@@ -114,6 +130,7 @@ impl Daemon {
         }
         let events = Arc::new(EventHub {
             clients: Mutex::new(Vec::new()),
+            active_viewers: Mutex::new(0),
             last_viewer_seen: Mutex::new(None),
         });
         let state = Arc::new(Mutex::new(AppState {
@@ -160,8 +177,10 @@ impl Daemon {
             return Ok(false);
         };
         if !is_expected_daemon(&info) {
+            let stopped =
+                client_request_at_port(info.port, "POST", "/api/daemon/stop", &[]).is_ok();
             let _ = fs::remove_file(info_path);
-            return Ok(false);
+            return Ok(stopped);
         }
         let _ = client_request_at_port(info.port, "POST", "/api/daemon/stop", &[])?;
         for _ in 0..50 {
@@ -178,21 +197,26 @@ impl Daemon {
         Self::start_managed()
     }
 
-    pub fn open_via_client(request: &OpenRequest) -> Result<OpenResponse> {
+    pub fn prepare_via_client(request: &SessionRequest) -> Result<PrepareResponse> {
         let body = serde_json::to_vec(request)?;
-        let response = client_request("POST", "/api/sessions/open", &body)?;
+        let response = client_request("POST", "/api/sessions/prepare", &body)?;
         Ok(serde_json::from_slice(&response)?)
     }
 
-    pub fn close_via_client(request: &OpenRequest) -> Result<CloseResponse> {
+    pub fn browse_via_client() -> Result<BrowseResponse> {
+        let response = client_request("POST", "/api/viewer/open", &[])?;
+        Ok(serde_json::from_slice(&response)?)
+    }
+
+    pub fn close_via_client(request: &SessionRequest) -> Result<CloseResponse> {
         let body = serde_json::to_vec(request)?;
         let response = client_request("POST", "/api/sessions/close", &body)?;
         Ok(serde_json::from_slice(&response)?)
     }
 
-    pub fn delete_via_client(request: &OpenRequest) -> Result<DeleteResponse> {
+    pub fn clean_via_client(request: &SessionRequest) -> Result<CleanResponse> {
         let body = serde_json::to_vec(request)?;
-        let response = client_request("POST", "/api/sessions/delete", &body)?;
+        let response = client_request("POST", "/api/sessions/clean", &body)?;
         Ok(serde_json::from_slice(&response)?)
     }
 }
@@ -245,19 +269,21 @@ fn changed_artifact(
     Some((record.key.clone(), version, Arc::clone(&state.events)))
 }
 
-fn respond_events(request: Request, receiver: Receiver<Value>) -> Result<()> {
+fn respond_events(
+    request: Request,
+    events: Arc<EventHub>,
+    receiver: Receiver<Value>,
+) -> Result<()> {
     let payload = receiver
-        .recv_timeout(Duration::from_secs(20))
+        .recv_timeout(Duration::from_secs(5))
         .unwrap_or_else(|_| json!({"type": "heartbeat"}));
-    respond_json(request, serde_json::to_vec(&payload)?)
+    let result = respond_json(request, serde_json::to_vec(&payload)?);
+    events.disconnect_viewer();
+    result
 }
 
-fn publish_sessions_changed(events: &EventHub, key: Option<&str>) {
-    let mut payload = json!({"type": "sessions_changed"});
-    if let Some(key) = key {
-        payload["key"] = json!(key);
-    }
-    events.publish(payload);
+fn publish_sessions_changed(events: &EventHub) {
+    events.publish(json!({"type": "sessions_changed"}));
 }
 
 fn handle_request(
@@ -275,6 +301,7 @@ fn handle_request(
             let body = serde_json::to_vec(&HealthResponse {
                 ok: true,
                 pid: std::process::id(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
             })?;
             respond_json(request, body)
         }
@@ -283,7 +310,22 @@ fn handle_request(
                 let state = state.lock().map_err(|_| "daemon state lock poisoned")?;
                 Arc::clone(&state.events)
             };
-            respond_events(request, events.subscribe())
+            let receiver = events.subscribe();
+            respond_events(request, events, receiver)
+        }
+        (Method::Post, "/api/viewer/open") => {
+            let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
+            let opened = open_browser(&viewer_root_url(port));
+            if opened {
+                state.browser_opened = true;
+            }
+            respond_json(
+                request,
+                serde_json::to_vec(&BrowseResponse {
+                    viewer_url: viewer_root_url(port),
+                    opened,
+                })?,
+            )
         }
         (Method::Post, "/api/daemon/stop") => {
             let response = respond_json(request, br#"{"ok":true}"#.to_vec());
@@ -297,12 +339,13 @@ fn handle_request(
                 serde_json::to_vec(&storage::session_summaries(&state.registry))?,
             )
         }
-        (Method::Post, "/api/sessions/open") => {
+        (Method::Post, "/api/sessions/prepare") => {
             let mut body = String::new();
             request.as_reader().read_to_string(&mut body)?;
-            let open_request: OpenRequest = serde_json::from_str(&body)?;
+            let prepare_request: SessionRequest = serde_json::from_str(&body)?;
             let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
-            let (record, warning) = storage::prepare_artifact(&mut state.registry, &open_request)?;
+            let (record, warning) =
+                storage::prepare_artifact(&mut state.registry, &prepare_request)?;
             storage::save_registry(&state.registry)?;
             if let Ok(mut watcher) = state.watcher.lock()
                 && let Err(error) = watcher.watch_record(&record)
@@ -312,14 +355,13 @@ fn handle_request(
             let title = storage::read_title(&record.cwd.join(&record.artifact_path))
                 .unwrap_or_else(|_| "Untitled session".to_string());
             let should_open_browser = state.events.should_open_browser(state.browser_opened);
-            state.browser_opened = true;
             let events = Arc::clone(&state.events);
             let viewer_url = viewer_url(port, &record.key);
-            if should_open_browser {
-                open_browser(&viewer_url);
+            if should_open_browser && open_browser(&viewer_root_url(port)) {
+                state.browser_opened = true;
             }
-            publish_sessions_changed(&events, Some(&record.key));
-            let response = OpenResponse {
+            publish_sessions_changed(&events);
+            let response = PrepareResponse {
                 provider: record.provider,
                 session_id: record.session_id,
                 artifact_path: record.artifact_path,
@@ -333,12 +375,12 @@ fn handle_request(
         (Method::Post, "/api/sessions/close") => {
             let mut body = String::new();
             request.as_reader().read_to_string(&mut body)?;
-            let close_request: OpenRequest = serde_json::from_str(&body)?;
+            let close_request: SessionRequest = serde_json::from_str(&body)?;
             let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
             let closed = storage::mark_closed(&mut state.registry, &close_request);
             storage::save_registry(&state.registry)?;
             let events = Arc::clone(&state.events);
-            publish_sessions_changed(&events, None);
+            publish_sessions_changed(&events);
             let response = CloseResponse {
                 provider: close_request.provider,
                 session_id: close_request.session_id,
@@ -346,20 +388,20 @@ fn handle_request(
             };
             respond_json(request, serde_json::to_vec(&response)?)
         }
-        (Method::Post, "/api/sessions/delete") => {
+        (Method::Post, "/api/sessions/clean") => {
             let mut body = String::new();
             request.as_reader().read_to_string(&mut body)?;
-            let delete_request: OpenRequest = serde_json::from_str(&body)?;
+            let clean_request: SessionRequest = serde_json::from_str(&body)?;
             let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
-            let deleted_record = storage::delete_record(&mut state.registry, &delete_request)?;
+            let cleaned_record = storage::clean_record(&mut state.registry, &clean_request)?;
             storage::save_registry(&state.registry)?;
             let events = Arc::clone(&state.events);
-            publish_sessions_changed(&events, None);
-            let response = DeleteResponse {
-                provider: delete_request.provider,
-                session_id: delete_request.session_id,
-                deleted: deleted_record.is_some(),
-                artifact_path: deleted_record.map(|record| record.artifact_path),
+            publish_sessions_changed(&events);
+            let response = CleanResponse {
+                provider: clean_request.provider,
+                session_id: clean_request.session_id,
+                cleaned: cleaned_record.is_some(),
+                artifact_path: cleaned_record.map(|record| record.artifact_path),
             };
             respond_json(request, serde_json::to_vec(&response)?)
         }
@@ -430,7 +472,11 @@ fn viewer_url(port: u16, key: &str) -> String {
     format!("http://127.0.0.1:{port}/?session={key}")
 }
 
-fn open_browser(url: &str) {
+fn viewer_root_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/")
+}
+
+fn open_browser(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     let result = Command::new("open").arg(url).spawn();
     #[cfg(target_os = "linux")]
@@ -442,8 +488,12 @@ fn open_browser(url: &str) {
         "automatic browser opening is unsupported",
     ));
 
-    if let Err(error) = result {
-        eprintln!("session-whiteboard: could not open browser: {error}");
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("session-whiteboard: could not open browser: {error}");
+            false
+        }
     }
 }
 
@@ -492,6 +542,7 @@ fn ensure_daemon() -> Result<u16> {
         if is_expected_daemon(&info) {
             return Ok(info.port);
         }
+        let _ = client_request_at_port(info.port, "POST", "/api/daemon/stop", &[]);
         let _ = fs::remove_file(storage::daemon_info_path());
     }
 
@@ -538,7 +589,9 @@ fn read_daemon_info() -> Result<DaemonInfo> {
 }
 
 fn is_expected_daemon(info: &DaemonInfo) -> bool {
-    health_response(info.port).is_some_and(|health| health.ok && health.pid == info.pid)
+    health_response(info.port).is_some_and(|health| {
+        health.ok && health.pid == info.pid && health.version == env!("CARGO_PKG_VERSION")
+    })
 }
 
 fn health_response(port: u16) -> Option<HealthResponse> {
@@ -577,15 +630,16 @@ mod tests {
     }
 
     #[test]
-    fn browser_open_policy_reopens_only_after_a_known_viewer_stales() {
+    fn browser_open_policy_reopens_only_after_a_known_viewer_disconnects() {
         let hub = EventHub::default();
         assert!(hub.should_open_browser(false));
         assert!(!hub.should_open_browser(true));
 
         let _receiver = hub.subscribe();
         assert!(!hub.should_open_browser(true));
+        hub.disconnect_viewer();
         if let Ok(mut last_seen) = hub.last_viewer_seen.lock() {
-            *last_seen = Some(Instant::now() - Duration::from_secs(36));
+            *last_seen = Some(Instant::now() - Duration::from_secs(7));
         }
         assert!(hub.should_open_browser(true));
     }

@@ -21,14 +21,14 @@ impl Provider {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenRequest {
+pub struct SessionRequest {
     pub provider: Provider,
     pub session_id: String,
     pub cwd: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenResponse {
+pub struct PrepareResponse {
     pub provider: Provider,
     pub session_id: String,
     pub artifact_path: PathBuf,
@@ -40,6 +40,12 @@ pub struct OpenResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseResponse {
+    pub viewer_url: String,
+    pub opened: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloseResponse {
     pub provider: Provider,
     pub session_id: String,
@@ -47,10 +53,10 @@ pub struct CloseResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeleteResponse {
+pub struct CleanResponse {
     pub provider: Provider,
     pub session_id: String,
-    pub deleted: bool,
+    pub cleaned: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_path: Option<PathBuf>,
 }
@@ -89,6 +95,8 @@ pub struct SessionSummary {
 pub struct HealthResponse {
     pub ok: bool,
     pub pid: u32,
+    #[serde(default)]
+    pub version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,13 +4,12 @@ mod model;
 mod storage;
 mod template;
 
-use std::io::Read;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::daemon::Daemon;
-use crate::model::{OpenRequest, Provider};
+use crate::model::{Provider, SessionRequest};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -33,8 +32,8 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         port: u16,
     },
-    /// Create or reactivate the HTML artifact for a session.
-    Open {
+    /// Prepare or reactivate a session and return its HTML whiteboard path.
+    Prepare {
         #[arg(long, value_enum)]
         provider: ProviderArg,
         #[arg(long)]
@@ -42,6 +41,12 @@ enum Command {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
         /// Emit only JSON, suitable for an agent or integration adapter.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Start the managed daemon and invoke the browser viewer.
+    Browse {
+        /// Emit only JSON, suitable for an integration adapter.
         #[arg(long)]
         json: bool,
     },
@@ -56,8 +61,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Permanently delete a session artifact and its registry record.
-    Delete {
+    /// Clean a session whiteboard and its registry record permanently.
+    Clean {
         #[arg(long, value_enum)]
         provider: ProviderArg,
         #[arg(long)]
@@ -83,16 +88,6 @@ enum Command {
         /// Uninstall for both supported providers when omitted.
         #[arg(long, value_enum)]
         provider: Option<ProviderArg>,
-    },
-    /// Emit hook context for a provider. Reads provider event JSON from stdin.
-    Hook {
-        #[arg(long, value_enum)]
-        provider: ProviderArg,
-    },
-    /// Deactivate a session from a provider SessionEnd hook.
-    SessionEnd {
-        #[arg(long, value_enum)]
-        provider: ProviderArg,
     },
 }
 
@@ -154,19 +149,19 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Ok(())
             }
         },
-        Command::Open {
+        Command::Prepare {
             provider,
             session_id,
             cwd,
             json,
         } => {
             let cwd = std::fs::canonicalize(cwd)?;
-            let request = OpenRequest {
+            let request = SessionRequest {
                 provider: provider.into(),
                 session_id,
                 cwd,
             };
-            let response = Daemon::open_via_client(&request)?;
+            let response = Daemon::prepare_via_client(&request)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&response)?);
             } else {
@@ -178,6 +173,16 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             Ok(())
         }
+        Command::Browse { json } => {
+            let response = Daemon::browse_via_client()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!("viewer_url={}", response.viewer_url);
+                println!("opened={}", response.opened);
+            }
+            Ok(())
+        }
         Command::Close {
             provider,
             session_id,
@@ -185,7 +190,7 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             json,
         } => {
             let cwd = std::fs::canonicalize(cwd)?;
-            let response = Daemon::close_via_client(&OpenRequest {
+            let response = Daemon::close_via_client(&SessionRequest {
                 provider: provider.into(),
                 session_id,
                 cwd,
@@ -197,24 +202,24 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             Ok(())
         }
-        Command::Delete {
+        Command::Clean {
             provider,
             session_id,
             cwd,
             json,
         } => {
             let cwd = std::fs::canonicalize(cwd)?;
-            let response = Daemon::delete_via_client(&OpenRequest {
+            let response = Daemon::clean_via_client(&SessionRequest {
                 provider: provider.into(),
                 session_id,
                 cwd,
             })?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&response)?);
-            } else if response.deleted {
-                println!("deleted=true");
+            } else if response.cleaned {
+                println!("cleaned=true");
             } else {
-                println!("deleted=false");
+                println!("cleaned=false");
             }
             Ok(())
         }
@@ -230,19 +235,6 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Command::Uninstall { provider } => {
             let result = install::uninstall(provider.map(Into::into))?;
             println!("{}", serde_json::to_string_pretty(&result)?);
-            Ok(())
-        }
-        Command::Hook { provider } => {
-            let mut input = String::new();
-            std::io::stdin().read_to_string(&mut input)?;
-            print!("{}", install::hook_context(provider.into(), &input));
-            Ok(())
-        }
-        Command::SessionEnd { provider } => {
-            let mut input = String::new();
-            std::io::stdin().read_to_string(&mut input)?;
-            let request = install::hook_session_end_request(provider.into(), &input)?;
-            let _ = Daemon::close_via_client(&request)?;
             Ok(())
         }
     }
