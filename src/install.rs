@@ -63,7 +63,8 @@ message after a successful update.
    useful action. Delete old branches, solved questions, and irrelevant detail.
 6. Do not follow a fixed content template. Use a stable visual language instead:
    spatial grouping, clear hierarchy, compact labels, and relationships that can
-   be understood at a glance. Prefer a single viewport without page scrolling.
+   be understood at a glance. Prefer a compact single viewport, but allow natural
+   scrolling whenever the alternative would clip or overlap essential content.
 7. Keep the HTML self-contained. Inline CSS, JavaScript, SVG, and small data
    are preferred. External links are allowed when useful, including local file
    links.
@@ -74,14 +75,15 @@ message after a successful update.
    as a copy action that writes that exact string to the clipboard. Do not use
    an editor-specific URL scheme. Keep the readable path and line visible if
    the Clipboard API is not available.
-10. Keep the normal board within one viewport. If essential context does not
-   fit, collapse it behind an explicit click target such as <details> or a
-   dialog/popover and label what is hidden. Do not turn the board into a long
-   scrolling transcript.
-11. Read .interface-design/system.md when it is present and follow its compact
-   graphite-workbench design contract: 4px spacing rhythm, quiet borders-only
-   depth, one cyan focus accent, clear weight-based hierarchy, and no generic
-   card-grid template. The current focus must visually lead.
+10. Keep the normal board compact. If secondary context does not fit, collapse it
+   behind an explicit click target such as <details> or a dialog/popover and label
+   what is hidden. If essential context still needs more room, let the document
+   scroll; never allow cards to overlap or become unreadable, and do not turn the
+   board into a long scrolling transcript.
+11. Read .interface-design/system.md when it is present and follow its paper
+   whiteboard contract: 4px spacing rhythm, warm paper surface, graphite rules,
+   one blue marker accent, a broad focus field with narrow marginalia, and no
+   generic equal-card grid. The current focus must visually lead.
 12. SessionEnd is a cleanup hook rather than a context reminder: it deactivates
     this session in the registry so the viewer can keep it available under the
     collapsed inactive list.

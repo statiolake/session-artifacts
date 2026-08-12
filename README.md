@@ -49,12 +49,13 @@ Codex hook feature flags are retained so other Codex hooks are not disabled.
 ## Design language
 
 The included `.interface-design/system.md` records the whiteboard's visual
-direction: high-density graphite workbench, restrained cyan focus accent,
-borders-only depth, and a one-viewport current-context projection. Overflow may
-be exposed through an explicit popover or details control; the board should not
-become a scrolling transcript. Local source references are copy-to-clipboard
-actions showing a portable relative `path:line`, rather than an editor-specific
-URL.
+direction: a bright paper surface, graphite notation, one blue marker accent,
+an asymmetric focus field with narrow marginalia, and a compact current-context
+projection. Secondary overflow may be exposed through an explicit popover or
+details control; essential overflow may scroll rather than overlap or clip. The
+board should not become a scrolling transcript. Local source references are
+copy-to-clipboard actions showing a portable relative `path:line`, rather than
+an editor-specific URL.
 
 ## Session workflow
 
@@ -97,8 +98,17 @@ The first `open` automatically starts the daemon and opens the navigation shell.
 The sidebar groups active sessions by their session-start cwd and the main pane
 live-reloads the selected HTML whiteboard. Deactivated sessions remain available
 under a collapsed inactive toggle, and active sessions are ordered by the
-whiteboard file's latest modification time. Later opens for the same daemon do
-not open duplicate browser windows.
+whiteboard file's latest modification time. Artifact changes are detected by the
+daemon's filesystem watcher and pushed to the viewer for immediate reload. A
+changed session that is not currently selected receives an unread marker until
+it is opened. The daemon opens one canonical viewer tab per daemon lifetime;
+later session opens switch the existing viewer to that session instead of
+opening another tab. Browser/OS launchers cannot force reuse of an arbitrary
+already-open tab across all browser families, so the single-tab guarantee is
+owned by the viewer lifecycle rather than a browser-specific automation API. If
+the viewer event connection has been absent long enough to be considered stale,
+the next `open` is allowed to reopen the viewer with the requested session
+selected; this avoids making an intentionally closed tab impossible to recover.
 
 Manage the background daemon explicitly when needed:
 

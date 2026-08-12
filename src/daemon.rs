@@ -2,15 +2,20 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::model::{
     CloseResponse, DaemonInfo, DeleteResponse, HealthResponse, OpenRequest, OpenResponse, Registry,
+    SessionRecord,
 };
 use crate::storage;
 
@@ -20,7 +25,69 @@ pub struct Daemon;
 
 struct AppState {
     registry: Registry,
-    browser_opened: HashSet<String>,
+    browser_opened: bool,
+    events: Arc<EventHub>,
+    watcher: Arc<Mutex<WatcherState>>,
+}
+
+#[derive(Default)]
+struct EventHub {
+    clients: Mutex<Vec<Sender<Value>>>,
+    last_viewer_seen: Mutex<Option<Instant>>,
+}
+
+impl EventHub {
+    fn subscribe(&self) -> Receiver<Value> {
+        let (sender, receiver) = mpsc::channel();
+        if let Ok(mut last_seen) = self.last_viewer_seen.lock() {
+            *last_seen = Some(Instant::now());
+        }
+        if let Ok(mut clients) = self.clients.lock() {
+            clients.push(sender);
+        }
+        receiver
+    }
+
+    fn viewer_is_recent(&self) -> bool {
+        self.last_viewer_seen
+            .lock()
+            .ok()
+            .and_then(|last_seen| *last_seen)
+            .is_some_and(|last_seen| last_seen.elapsed() < Duration::from_secs(35))
+    }
+
+    fn viewer_has_been_seen(&self) -> bool {
+        self.last_viewer_seen
+            .lock()
+            .ok()
+            .is_some_and(|last_seen| last_seen.is_some())
+    }
+
+    fn should_open_browser(&self, browser_opened: bool) -> bool {
+        !browser_opened || (self.viewer_has_been_seen() && !self.viewer_is_recent())
+    }
+
+    fn publish(&self, payload: Value) {
+        let Ok(mut clients) = self.clients.lock() else {
+            return;
+        };
+        clients.retain(|client| client.send(payload.clone()).is_ok());
+    }
+}
+
+struct WatcherState {
+    watcher: RecommendedWatcher,
+    roots: HashSet<PathBuf>,
+}
+
+impl WatcherState {
+    fn watch_record(&mut self, record: &SessionRecord) -> Result<()> {
+        let root = record.cwd.join(".session-whiteboard");
+        if root.exists() && self.roots.insert(root.clone()) {
+            self.watcher.watch(&root, RecursiveMode::Recursive)?;
+        }
+        Ok(())
+    }
 }
 
 impl Daemon {
@@ -28,10 +95,36 @@ impl Daemon {
         let listener = TcpListener::bind(("127.0.0.1", port))?;
         let actual_port = listener.local_addr()?.port();
         let server = Arc::new(Server::from_listener(listener, None)?);
-        let state = Arc::new(Mutex::new(AppState {
-            registry: storage::load_registry()?,
-            browser_opened: HashSet::new(),
+        let registry = storage::load_registry()?;
+        let (file_event_sender, file_event_receiver) = mpsc::channel();
+        let watcher = RecommendedWatcher::new(
+            move |result| {
+                let _ = file_event_sender.send(result);
+            },
+            Config::default(),
+        )?;
+        let watcher = Arc::new(Mutex::new(WatcherState {
+            watcher,
+            roots: HashSet::new(),
         }));
+        if let Ok(mut watcher_state) = watcher.lock() {
+            for record in &registry.sessions {
+                watcher_state.watch_record(record)?;
+            }
+        }
+        let events = Arc::new(EventHub {
+            clients: Mutex::new(Vec::new()),
+            last_viewer_seen: Mutex::new(None),
+        });
+        let state = Arc::new(Mutex::new(AppState {
+            registry,
+            browser_opened: false,
+            events,
+            watcher,
+        }));
+
+        let watch_state = Arc::clone(&state);
+        thread::spawn(move || watch_files(file_event_receiver, watch_state));
 
         fs::create_dir_all(storage::app_data_dir())?;
         let info_path = storage::daemon_info_path();
@@ -114,6 +207,59 @@ impl Drop for DaemonInfoCleanup {
     }
 }
 
+fn watch_files(receiver: Receiver<notify::Result<Event>>, state: Arc<Mutex<AppState>>) {
+    let mut versions = std::collections::HashMap::new();
+    while let Ok(result) = receiver.recv() {
+        let Ok(event) = result else {
+            continue;
+        };
+        for path in event.paths {
+            thread::sleep(Duration::from_millis(30));
+            let Some((key, version, events)) = changed_artifact(&state, &path) else {
+                continue;
+            };
+            if versions.get(&key) == Some(&version) {
+                continue;
+            }
+            versions.insert(key.clone(), version.clone());
+            events.publish(json!({
+                "type": "artifact_updated",
+                "key": key,
+                "version": version,
+            }));
+        }
+    }
+}
+
+fn changed_artifact(
+    state: &Arc<Mutex<AppState>>,
+    path: &Path,
+) -> Option<(String, String, Arc<EventHub>)> {
+    let state = state.lock().ok()?;
+    let record = state.registry.sessions.iter().find(|record| {
+        let artifact = record.cwd.join(&record.artifact_path);
+        artifact == path
+    })?;
+    let artifact = record.cwd.join(&record.artifact_path);
+    let version = storage::file_version(&artifact).ok()?;
+    Some((record.key.clone(), version, Arc::clone(&state.events)))
+}
+
+fn respond_events(request: Request, receiver: Receiver<Value>) -> Result<()> {
+    let payload = receiver
+        .recv_timeout(Duration::from_secs(20))
+        .unwrap_or_else(|_| json!({"type": "heartbeat"}));
+    respond_json(request, serde_json::to_vec(&payload)?)
+}
+
+fn publish_sessions_changed(events: &EventHub, key: Option<&str>) {
+    let mut payload = json!({"type": "sessions_changed"});
+    if let Some(key) = key {
+        payload["key"] = json!(key);
+    }
+    events.publish(payload);
+}
+
 fn handle_request(
     mut request: Request,
     state: Arc<Mutex<AppState>>,
@@ -131,6 +277,13 @@ fn handle_request(
                 pid: std::process::id(),
             })?;
             respond_json(request, body)
+        }
+        (Method::Get, "/api/events") => {
+            let events = {
+                let state = state.lock().map_err(|_| "daemon state lock poisoned")?;
+                Arc::clone(&state.events)
+            };
+            respond_events(request, events.subscribe())
         }
         (Method::Post, "/api/daemon/stop") => {
             let response = respond_json(request, br#"{"ok":true}"#.to_vec());
@@ -151,13 +304,21 @@ fn handle_request(
             let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
             let (record, warning) = storage::prepare_artifact(&mut state.registry, &open_request)?;
             storage::save_registry(&state.registry)?;
+            if let Ok(mut watcher) = state.watcher.lock()
+                && let Err(error) = watcher.watch_record(&record)
+            {
+                eprintln!("session-whiteboard daemon: could not watch artifact: {error}");
+            }
             let title = storage::read_title(&record.cwd.join(&record.artifact_path))
                 .unwrap_or_else(|_| "Untitled session".to_string());
-            let should_open_browser = state.browser_opened.insert(record.key.clone());
+            let should_open_browser = state.events.should_open_browser(state.browser_opened);
+            state.browser_opened = true;
+            let events = Arc::clone(&state.events);
             let viewer_url = viewer_url(port, &record.key);
             if should_open_browser {
                 open_browser(&viewer_url);
             }
+            publish_sessions_changed(&events, Some(&record.key));
             let response = OpenResponse {
                 provider: record.provider,
                 session_id: record.session_id,
@@ -176,6 +337,8 @@ fn handle_request(
             let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
             let closed = storage::mark_closed(&mut state.registry, &close_request);
             storage::save_registry(&state.registry)?;
+            let events = Arc::clone(&state.events);
+            publish_sessions_changed(&events, None);
             let response = CloseResponse {
                 provider: close_request.provider,
                 session_id: close_request.session_id,
@@ -190,6 +353,8 @@ fn handle_request(
             let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
             let deleted_record = storage::delete_record(&mut state.registry, &delete_request)?;
             storage::save_registry(&state.registry)?;
+            let events = Arc::clone(&state.events);
+            publish_sessions_changed(&events, None);
             let response = DeleteResponse {
                 provider: delete_request.provider,
                 session_id: delete_request.session_id,
@@ -364,7 +529,7 @@ fn ensure_daemon() -> Result<u16> {
         }
         thread::sleep(Duration::from_millis(50));
     }
-    Err("daemon did not become ready".into())
+    Err("daemon did not become ready; if this command is running in a sandbox, retry it with the environment's escalation/approval mechanism, or use the host/proxy/MCP execution path so the daemon can bind localhost and write its runtime state".into())
 }
 
 fn read_daemon_info() -> Result<DaemonInfo> {
@@ -409,5 +574,19 @@ mod tests {
             viewer_url(43123, "codex-abc123"),
             "http://127.0.0.1:43123/?session=codex-abc123"
         );
+    }
+
+    #[test]
+    fn browser_open_policy_reopens_only_after_a_known_viewer_stales() {
+        let hub = EventHub::default();
+        assert!(hub.should_open_browser(false));
+        assert!(!hub.should_open_browser(true));
+
+        let _receiver = hub.subscribe();
+        assert!(!hub.should_open_browser(true));
+        if let Ok(mut last_seen) = hub.last_viewer_seen.lock() {
+            *last_seen = Some(Instant::now() - Duration::from_secs(36));
+        }
+        assert!(hub.should_open_browser(true));
     }
 }

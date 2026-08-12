@@ -6,19 +6,19 @@
   <title>Session Whiteboard</title>
   <style>
     :root {
-      color-scheme: dark;
-      --canvas: #0d1115;
-      --panel: #11171d;
-      --panel-raised: #171f26;
-      --inset: #0a0e12;
-      --ink: #e8edf0;
-      --ink-secondary: #a8b4bc;
-      --ink-muted: #71808b;
-      --line: rgba(232,237,240,.10);
-      --line-soft: rgba(232,237,240,.06);
-      --focus: #76d5df;
-      --positive: #8bd5a3;
-      --warning: #e3b978;
+      color-scheme: light;
+      --canvas: #eeece5;
+      --panel: #f7f6f1;
+      --panel-raised: #e5e2d9;
+      --inset: #e8e5dc;
+      --ink: #293130;
+      --ink-secondary: #59635f;
+      --ink-muted: #7d8580;
+      --line: rgba(41,49,48,.16);
+      --line-soft: rgba(41,49,48,.09);
+      --focus: #176a83;
+      --positive: #27754f;
+      --warning: #a66d24;
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 12px;
     }
@@ -61,7 +61,7 @@
       place-items: center;
       width: 24px;
       height: 24px;
-      color: var(--canvas);
+      color: var(--panel);
       background: var(--focus);
       font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
       letter-spacing: -.08em;
@@ -133,21 +133,34 @@
       background: var(--positive);
       content: "";
     }
-    .session:hover { background: rgba(232,237,240,.045); }
+    .session:hover { background: rgba(41,49,48,.045); }
     .session.active {
-      background: rgba(118,213,223,.08);
-      border-color: rgba(118,213,223,.22);
+      background: rgba(23,106,131,.08);
+      border-color: rgba(23,106,131,.25);
     }
     .session.active::before { background: var(--focus); }
     .session.inactive { color: var(--ink-secondary); }
     .session.inactive::before { background: var(--ink-muted); }
     .session-title {
-      overflow: hidden;
+      display: flex;
+      align-items: center;
+      gap: 6px;
       color: var(--ink);
       font-size: 12px;
       font-weight: 600;
+    }
+    .session-title-text {
+      overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .unread-mark {
+      flex: none;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--focus);
+      box-shadow: 0 0 0 2px rgba(23,106,131,.13);
     }
     .session.inactive .session-title { color: var(--ink-secondary); }
     .session-meta {
@@ -218,7 +231,7 @@
       background: transparent;
       cursor: pointer;
     }
-    .footer button:hover { color: var(--ink); border-color: rgba(232,237,240,.20); }
+    .footer button:hover { color: var(--ink); border-color: rgba(41,49,48,.28); }
     .content {
       display: flex;
       flex-direction: column;
@@ -298,7 +311,12 @@
       text-wrap: pretty;
     }
     @media (max-width: 700px) {
-      .shell { grid-template-columns: 224px minmax(0, 1fr); }
+      .shell { grid-template-columns: 1fr; grid-template-rows: minmax(158px, 34vh) minmax(0, 1fr); }
+      .sidebar { min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); }
+      .sessions { padding: 8px; }
+      .group { margin-bottom: 7px; }
+      .session { min-height: 42px; padding-top: 6px; padding-bottom: 6px; }
+      .footer { min-height: 36px; }
       .content-head { padding: 0 12px; }
     }
   </style>
@@ -347,6 +365,15 @@
     let selected = null;
     let selectedVersion = null;
     let requestedSession = new URLSearchParams(window.location.search).get('session');
+    let eventsConnected = false;
+    let inactiveOpen = false;
+    const unread = new Set();
+    const readVersions = new Map();
+
+    try {
+      const saved = JSON.parse(localStorage.getItem('session-whiteboard-read-versions') || '{}');
+      Object.keys(saved).forEach(function(key) { readVersions.set(key, saved[key]); });
+    } catch (_) {}
 
     function esc(value) {
       return String(value).replace(/[&<>'"]/g, function(c) {
@@ -372,9 +399,11 @@
       return Array.from(groups.entries()).map(function(entry) {
         const cwd = entry[0];
         const buttons = entry[1].map(function(s) {
+          const isUnread = unread.has(s.key);
           return '<button class="session ' + (s.key === selected ? 'active ' : '') + (s.active ? '' : 'inactive') +
             '" data-key="' + esc(s.key) + '" aria-pressed="' + (s.key === selected ? 'true' : 'false') + '">' +
-            '<div class="session-title">' + esc(s.title || 'Untitled session') + '</div>' +
+            '<div class="session-title"><span class="session-title-text">' + esc(s.title || 'Untitled session') + '</span>' +
+            (isUnread ? '<span class="unread-mark" title="Updated since last open" aria-label="Updated since last open"></span>' : '') + '</div>' +
             '<div class="session-meta"><span>' + esc(s.provider) + '</span><span>' +
             esc(String(s.session_id || '').slice(0, 8)) + '</span></div>' +
             '</button>';
@@ -402,7 +431,7 @@
         ? renderGroups(active)
         : '<div class="empty-side">No active sessions.</div>';
       const inactiveMarkup = inactive.length
-        ? '<details class="inactive-section"' + (inactive.some(function(s) { return s.key === selected; }) ? ' open' : '') +
+        ? '<details class="inactive-section"' + (inactiveOpen ? ' open' : '') +
           '><summary><span class="inactive-label">Inactive</span><span class="inactive-count">' +
           inactive.length + '</span></summary><div>' + renderGroups(inactive) + '</div></details>'
         : '';
@@ -410,6 +439,12 @@
         '<div class="section-label"><span>Active</span><span class="section-count">' + active.length + '</span></div>' +
         activeMarkup + inactiveMarkup;
       bindSessionButtons();
+      const inactiveSection = sessionList.querySelector('.inactive-section');
+      if (inactiveSection) {
+        inactiveSection.addEventListener('toggle', function() {
+          inactiveOpen = inactiveSection.open;
+        });
+      }
     }
 
     function updateSelectionChrome() {
@@ -423,15 +458,42 @@
       liveIndicator.textContent = session.active ? 'live' : 'inactive';
     }
 
+    function persistReadVersions() {
+      try {
+        const values = {};
+        readVersions.forEach(function(version, key) { values[key] = version; });
+        localStorage.setItem('session-whiteboard-read-versions', JSON.stringify(values));
+      } catch (_) {}
+    }
+
+    function markRead(key, version) {
+      if (!key || !version) return;
+      unread.delete(key);
+      readVersions.set(key, version);
+      persistReadVersions();
+    }
+
+    function reconcileUnread() {
+      sessions.forEach(function(session) {
+        const seen = readVersions.get(session.key);
+        if (seen && seen !== session.version && session.key !== selected) unread.add(session.key);
+        if (session.key === selected) markRead(session.key, session.version);
+      });
+    }
+
     async function loadSessions() {
       try {
+        const currentInactiveSection = sessionList.querySelector('.inactive-section');
+        if (currentInactiveSection) inactiveOpen = currentInactiveSection.open;
         const response = await fetch('/api/sessions', { cache: 'no-store' });
         if (!response.ok) throw new Error('HTTP ' + response.status);
         sessions = await response.json();
         sessions.sort(function(a, b) { return versionTime(b) - versionTime(a); });
+        reconcileUnread();
         const activeCount = sessions.filter(function(s) { return s.active; }).length;
         const inactiveCount = sessions.length - activeCount;
-        status.textContent = activeCount + ' live' + (inactiveCount ? ' · ' + inactiveCount + ' inactive' : '');
+        status.textContent = activeCount + ' live' + (inactiveCount ? ' · ' + inactiveCount + ' inactive' : '') +
+          (unread.size ? ' · ' + unread.size + ' unread' : '');
         renderSessions();
         updateSelectionChrome();
         if (requestedSession && sessions.some(function(s) { return s.key === requestedSession; })) {
@@ -454,6 +516,9 @@
 
     async function select(key) {
       selected = key;
+      const session = sessions.find(function(s) { return s.key === key; });
+      if (session && !session.active) inactiveOpen = true;
+      if (session) markRead(session.key, session.version);
       selectedVersion = null;
       history.replaceState(null, '', '/?session=' + encodeURIComponent(key));
       frame.src = '/session/' + encodeURIComponent(key) + '?t=' + Date.now();
@@ -477,10 +542,44 @@
       } catch (_) {}
     }
 
+    async function connectEvents() {
+      while (true) {
+        try {
+          const response = await fetch('/api/events', { cache: 'no-store' });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          eventsConnected = true;
+          if (!selected) liveIndicator.textContent = 'watching';
+          const event = await response.json();
+          if (event.type === 'artifact_updated' && event.key) {
+            if (event.key === selected) {
+              markRead(event.key, event.version);
+              await checkVersion(true);
+            } else {
+              unread.add(event.key);
+            }
+          }
+          await loadSessions();
+          if (event.type === 'sessions_changed' && event.key &&
+              sessions.some(function(session) { return session.key === event.key; })) {
+            await select(event.key);
+          }
+        } catch (_) {
+          eventsConnected = false;
+          liveIndicator.textContent = selected ? liveIndicator.textContent : 'offline';
+          await new Promise(function(resolve) { setTimeout(resolve, 1500); });
+        }
+      }
+    }
+
     document.querySelector('#refresh').addEventListener('click', loadSessions);
     loadSessions();
-    setInterval(loadSessions, 1500);
-    setInterval(function() { checkVersion(false); }, 700);
+    connectEvents();
+    setInterval(function() {
+      if (!eventsConnected) {
+        loadSessions();
+        checkVersion(false);
+      }
+    }, 2000);
   </script>
 </body>
 </html>
