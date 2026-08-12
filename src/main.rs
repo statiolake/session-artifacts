@@ -27,6 +27,8 @@ struct Cli {
 enum Command {
     /// Run the local daemon in the foreground.
     Daemon {
+        #[command(subcommand)]
+        command: Option<DaemonCommand>,
         /// Bind to this local TCP port. Port 0 selects a free port.
         #[arg(long, default_value_t = 0)]
         port: u16,
@@ -87,6 +89,21 @@ enum Command {
         #[arg(long, value_enum)]
         provider: ProviderArg,
     },
+    /// Deactivate a session from a provider SessionEnd hook.
+    SessionEnd {
+        #[arg(long, value_enum)]
+        provider: ProviderArg,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DaemonCommand {
+    /// Start the managed background daemon if it is not already running.
+    Start,
+    /// Stop the managed background daemon.
+    Stop,
+    /// Restart the managed background daemon.
+    Restart,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -116,7 +133,27 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Daemon { port } => Daemon::run_foreground(port),
+        Command::Daemon { command, port } => match command {
+            None => Daemon::run_foreground(port),
+            Some(DaemonCommand::Start) => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&Daemon::start_managed()?)?
+                );
+                Ok(())
+            }
+            Some(DaemonCommand::Stop) => {
+                println!("stopped={}", Daemon::stop_managed()?);
+                Ok(())
+            }
+            Some(DaemonCommand::Restart) => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&Daemon::restart_managed()?)?
+                );
+                Ok(())
+            }
+        },
         Command::Open {
             provider,
             session_id,
@@ -199,6 +236,13 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input)?;
             print!("{}", install::hook_context(provider.into(), &input));
+            Ok(())
+        }
+        Command::SessionEnd { provider } => {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            let request = install::hook_session_end_request(provider.into(), &input)?;
+            let _ = Daemon::close_via_client(&request)?;
             Ok(())
         }
     }

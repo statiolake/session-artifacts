@@ -85,7 +85,7 @@ pub struct SessionSummary {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub ok: bool,
     pub pid: u32,

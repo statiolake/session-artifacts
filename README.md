@@ -18,12 +18,16 @@ Rust is the only build dependency:
 
 `install` is a global, one-time provider integration. It installs the skill and
 shell-only hook instructions for Claude Code and Codex. The hooks use ubiquitous
-shell tools such as `echo`, pass the provider's session ID and cwd to the agent,
-and tell the agent how to obtain the whiteboard path. They never invoke the
-`session-whiteboard` binary directly, so an agent running inside a container can
-choose the host, proxy, MCP, or other execution mechanism available there.
+shell tools, pass the provider's session ID and cwd to the agent, and emit
+Codex's required structured JSON for context events,
+and tell the agent how to obtain the whiteboard path. Context hooks never invoke
+the `session-whiteboard` binary directly, so an agent running inside a container
+can choose the host, proxy, MCP, or other execution mechanism available there.
 
-The hooks are registered for `SessionStart`, `UserPromptSubmit`, and `Stop`.
+The hooks are registered for `SessionStart`, `UserPromptSubmit`, `Stop`, and
+`SessionEnd`. The context hooks only inject session metadata; the `SessionEnd`
+hook invokes the installed executable to deactivate the session because no agent
+turn remains to perform that cleanup.
 The `Stop` hook adds one explicit turn-end reminder to replace the existing HTML
 with the current board; it allows the turn to finish after that reminder has
 been delivered once. Reinstalling migrates the old `session-artifacts` hooks and
@@ -40,7 +44,17 @@ Remove the global integrations when they are no longer wanted:
 
 Uninstall removes the session-whiteboard skill files and only the matching
 session-whiteboard hook entries. It preserves unrelated provider settings. The
-Codex hook feature flag is retained so other Codex hooks are not disabled.
+Codex hook feature flags are retained so other Codex hooks are not disabled.
+
+## Design language
+
+The included `.interface-design/system.md` records the whiteboard's visual
+direction: high-density graphite workbench, restrained cyan focus accent,
+borders-only depth, and a one-viewport current-context projection. Overflow may
+be exposed through an explicit popover or details control; the board should not
+become a scrolling transcript. Local source references are copy-to-clipboard
+actions showing a portable relative `path:line`, rather than an editor-specific
+URL.
 
 ## Session workflow
 
@@ -81,8 +95,16 @@ To explicitly delete the HTML and its registry record:
 
 The first `open` automatically starts the daemon and opens the navigation shell.
 The sidebar groups active sessions by their session-start cwd and the main pane
-live-reloads the selected HTML whiteboard. Later opens for the same daemon do
+live-reloads the selected HTML whiteboard. Deactivated sessions remain available
+under a collapsed inactive toggle, and active sessions are ordered by the
+whiteboard file's latest modification time. Later opens for the same daemon do
 not open duplicate browser windows.
+
+Manage the background daemon explicitly when needed:
+
+    session-whiteboard daemon start
+    session-whiteboard daemon stop
+    session-whiteboard daemon restart
 
 ## Development
 
@@ -91,6 +113,6 @@ not open duplicate browser windows.
     cargo test
     cargo clippy --all-targets --all-features -- -D warnings
 
-The current release targets local macOS/Linux-style workflows. VS Code links
-(`vscode://file/...:line:column`) are supported in the agent instructions;
-remote workspace URI mapping and editor extensions are outside this MVP.
+The current release targets local macOS/Linux-style workflows. Editor-specific
+URI schemes and remote workspace mapping are outside this MVP; source references
+stay portable as copied `relative/path:line` text.

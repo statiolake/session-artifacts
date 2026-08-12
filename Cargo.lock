@@ -289,6 +289,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "directories",
+ "libc",
  "serde",
  "serde_json",
  "tiny_http",

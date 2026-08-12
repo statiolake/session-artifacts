@@ -27,7 +27,7 @@ impl Daemon {
     pub fn run_foreground(port: u16) -> Result<()> {
         let listener = TcpListener::bind(("127.0.0.1", port))?;
         let actual_port = listener.local_addr()?.port();
-        let server = Server::from_listener(listener, None)?;
+        let server = Arc::new(Server::from_listener(listener, None)?);
         let state = Arc::new(Mutex::new(AppState {
             registry: storage::load_registry()?,
             browser_opened: HashSet::new(),
@@ -46,13 +46,43 @@ impl Daemon {
 
         for request in server.incoming_requests() {
             let state = Arc::clone(&state);
+            let server = Arc::clone(&server);
             thread::spawn(move || {
-                if let Err(error) = handle_request(request, state, actual_port) {
+                if let Err(error) = handle_request(request, state, actual_port, server) {
                     eprintln!("session-whiteboard daemon: {error}");
                 }
             });
         }
         Ok(())
+    }
+
+    pub fn start_managed() -> Result<DaemonInfo> {
+        let _ = ensure_daemon()?;
+        read_daemon_info()
+    }
+
+    pub fn stop_managed() -> Result<bool> {
+        let info_path = storage::daemon_info_path();
+        let Ok(info) = read_daemon_info() else {
+            return Ok(false);
+        };
+        if !is_expected_daemon(&info) {
+            let _ = fs::remove_file(info_path);
+            return Ok(false);
+        }
+        let _ = client_request_at_port(info.port, "POST", "/api/daemon/stop", &[])?;
+        for _ in 0..50 {
+            if !info_path.exists() || !is_expected_daemon(&info) {
+                return Ok(true);
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        Ok(true)
+    }
+
+    pub fn restart_managed() -> Result<DaemonInfo> {
+        let _ = Self::stop_managed()?;
+        Self::start_managed()
     }
 
     pub fn open_via_client(request: &OpenRequest) -> Result<OpenResponse> {
@@ -84,7 +114,12 @@ impl Drop for DaemonInfoCleanup {
     }
 }
 
-fn handle_request(mut request: Request, state: Arc<Mutex<AppState>>, port: u16) -> Result<()> {
+fn handle_request(
+    mut request: Request,
+    state: Arc<Mutex<AppState>>,
+    port: u16,
+    server: Arc<Server>,
+) -> Result<()> {
     let method = request.method().clone();
     let path = request.url().split('?').next().unwrap_or(request.url());
 
@@ -97,11 +132,16 @@ fn handle_request(mut request: Request, state: Arc<Mutex<AppState>>, port: u16) 
             })?;
             respond_json(request, body)
         }
+        (Method::Post, "/api/daemon/stop") => {
+            let response = respond_json(request, br#"{"ok":true}"#.to_vec());
+            server.unblock();
+            response
+        }
         (Method::Get, "/api/sessions") => {
             let state = state.lock().map_err(|_| "daemon state lock poisoned")?;
             respond_json(
                 request,
-                serde_json::to_vec(&storage::active_summaries(&state.registry))?,
+                serde_json::to_vec(&storage::session_summaries(&state.registry))?,
             )
         }
         (Method::Post, "/api/sessions/open") => {
@@ -244,6 +284,10 @@ fn open_browser(url: &str) {
 
 fn client_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<u8>> {
     let port = ensure_daemon()?;
+    client_request_at_port(port, method, path, body)
+}
+
+fn client_request_at_port(port: u16, method: &str, path: &str, body: &[u8]) -> Result<Vec<u8>> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))?;
     let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -280,25 +324,41 @@ fn client_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<u8>> {
 
 fn ensure_daemon() -> Result<u16> {
     if let Ok(info) = read_daemon_info() {
-        if is_healthy(info.port) {
+        if is_expected_daemon(&info) {
             return Ok(info.port);
         }
         let _ = fs::remove_file(storage::daemon_info_path());
     }
 
     let executable = std::env::current_exe()?;
-    Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("daemon")
         .arg("--port")
         .arg("0")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // A managed daemon must survive the short-lived CLI process. A new
+        // session also keeps terminal/process-tree cleanup from taking it
+        // down when the caller exits.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    command.spawn()?;
 
     for _ in 0..50 {
         if let Ok(info) = read_daemon_info()
-            && is_healthy(info.port)
+            && is_expected_daemon(&info)
         {
             return Ok(info.port);
         }
@@ -312,18 +372,31 @@ fn read_daemon_info() -> Result<DaemonInfo> {
     Ok(serde_json::from_str(&content)?)
 }
 
-fn is_healthy(port: u16) -> bool {
+fn is_expected_daemon(info: &DaemonInfo) -> bool {
+    health_response(info.port).is_some_and(|health| health.ok && health.pid == info.pid)
+}
+
+fn health_response(port: u16) -> Option<HealthResponse> {
     let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
-        return false;
+        return None;
     };
     if stream
         .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
         .is_err()
     {
-        return false;
+        return None;
     }
-    let mut response = String::new();
-    stream.read_to_string(&mut response).is_ok() && response.contains("200 OK")
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).ok()?;
+    let separator = b"\r\n\r\n";
+    let body_start = response
+        .windows(separator.len())
+        .position(|window| window == separator)?;
+    let header = String::from_utf8_lossy(&response[..body_start]);
+    if !header.lines().next()?.contains("200 OK") {
+        return None;
+    }
+    serde_json::from_slice(&response[body_start + separator.len()..]).ok()
 }
 
 #[cfg(test)]

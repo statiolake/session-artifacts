@@ -7,36 +7,155 @@ pub const SESSION_TEMPLATE: &str = r##"<!doctype html>
   <title>New session</title>
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: #eef1f4;
-      --surface: rgba(255,255,255,.88);
-      --text: #17202a;
-      --muted: #697684;
-      --line: #d8dfe6;
-      --accent: #6d45c4;
-      --shadow: 0 18px 48px rgba(24,39,56,.10);
+      color-scheme: dark;
+      --canvas: #0d1115;
+      --surface: #11171d;
+      --surface-raised: #171f26;
+      --ink: #e8edf0;
+      --ink-secondary: #a8b4bc;
+      --ink-muted: #71808b;
+      --line: rgba(232,237,240,.10);
+      --line-soft: rgba(232,237,240,.06);
+      --focus: #76d5df;
+      --positive: #8bd5a3;
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root { --bg:#101419; --surface:rgba(29,35,42,.92); --text:#edf2f6; --muted:#a9b4bf; --line:#38434e; --accent:#c3a9ff; --shadow:0 18px 48px rgba(0,0,0,.28); }
+      font-size: 12px;
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
-    main { display: grid; place-items: center; height: 100%; padding: 32px; }
-    .empty { width: min(620px, 100%); padding: clamp(28px, 6vw, 72px); border: 1px dashed var(--line); border-radius: 24px; background: var(--surface); box-shadow: var(--shadow); text-align: center; }
-    .eyebrow { color: var(--accent); font-size: .72rem; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
-    h1 { margin: .45rem 0 .75rem; font-size: clamp(1.8rem, 4vw, 3.6rem); line-height: 1.05; letter-spacing: -.05em; }
-    p { margin: 0; color: var(--muted); line-height: 1.6; }
+    html, body { width: 100%; height: 100%; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: var(--canvas);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 16px;
+      width: min(1120px, 100%);
+      height: 100%;
+      margin: 0 auto;
+      padding: 20px 24px;
+    }
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 28px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .eyebrow, .label {
+      color: var(--ink-muted);
+      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+    }
+    .eyebrow { color: var(--focus); }
+    .state {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--ink-muted);
+      font: 500 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .state::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--positive);
+      content: "";
+    }
+    .focus {
+      display: grid;
+      align-content: center;
+      gap: 10px;
+      min-width: 0;
+      padding-left: 16px;
+      border-left: 2px solid var(--focus);
+    }
+    h1 {
+      max-width: 760px;
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(26px, 5vw, 54px);
+      font-weight: 650;
+      letter-spacing: -.055em;
+      line-height: .98;
+      text-wrap: balance;
+    }
+    .lead {
+      max-width: 600px;
+      margin: 0;
+      color: var(--ink-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+      text-wrap: pretty;
+    }
+    .anchors {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      align-self: end;
+    }
+    .anchor {
+      min-width: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .anchor strong {
+      display: block;
+      margin-top: 5px;
+      overflow: hidden;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line-soft);
+      color: var(--ink-muted);
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    @media (max-width: 620px) {
+      main { gap: 12px; padding: 14px 16px; }
+      .anchors { grid-template-columns: 1fr; }
+      .anchor { padding: 8px 10px; }
+      h1 { font-size: clamp(28px, 12vw, 46px); }
+    }
   </style>
 </head>
 <body>
   <main>
-    <section class="empty" aria-label="Empty whiteboard">
-      <div class="eyebrow">Session Whiteboard</div>
-      <h1>New session</h1>
-      <p>ここから、現在の焦点に必要なコンテキストだけを一枚のボードへ再構成します。</p>
+    <header class="topline">
+      <span class="eyebrow">Session Whiteboard</span>
+      <span class="state">live projection</span>
+    </header>
+    <section class="focus" aria-label="Empty whiteboard">
+      <div>
+        <div class="label">Current focus</div>
+        <h1>New session</h1>
+      </div>
+      <p class="lead">ここから、現在の焦点に必要なコンテキストだけを一枚のボードへ再構成します。</p>
     </section>
+    <footer class="footer">
+      <span>one viewport · replace the draft as the focus changes</span>
+      <div class="anchors" aria-label="Whiteboard principles">
+        <div class="anchor"><span class="label">01</span><strong>focus first</strong></div>
+        <div class="anchor"><span class="label">02</span><strong>keep branches visible</strong></div>
+        <div class="anchor"><span class="label">03</span><strong>discard stale context</strong></div>
+      </div>
+    </footer>
   </main>
 </body>
 </html>

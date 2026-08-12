@@ -237,13 +237,26 @@ pub fn delete_record(
     Ok(Some(record))
 }
 
-pub fn active_summaries(registry: &Registry) -> Vec<SessionSummary> {
-    registry
+pub fn session_summaries(registry: &Registry) -> Vec<SessionSummary> {
+    let mut summaries = registry
         .sessions
         .iter()
-        .filter(|record| record.active)
         .filter_map(|record| summarize(record).ok())
-        .collect()
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        file_version_timestamp(&right.version)
+            .cmp(&file_version_timestamp(&left.version))
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    summaries
+}
+
+fn file_version_timestamp(version: &str) -> u128 {
+    version
+        .split_once('-')
+        .and_then(|(timestamp, _)| timestamp.parse().ok())
+        .unwrap_or_default()
 }
 
 pub fn find_record<'a>(registry: &'a Registry, key: &str) -> Option<&'a SessionRecord> {

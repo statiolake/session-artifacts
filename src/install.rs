@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::model::Provider;
+use crate::model::{OpenRequest, Provider};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-const INSTALLED_HOOK_EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "Stop"];
+const INSTALLED_HOOK_EVENTS: [&str; 4] = ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"];
 const PRODUCT_NAME: &str = "session-whiteboard";
 const LEGACY_PRODUCT_NAME: &str = "session-artifacts";
 const HOOK_MARKER: &str = "session-whiteboard-hook-v3";
@@ -70,11 +70,22 @@ message after a successful update.
 8. Always update the HTML title element. The title element is the canonical
    session title shown in the browser sidebar. Keep the visible main heading
    synchronized with it.
-9. When referring to a local source file, include a VS Code link whenever a
-   location is known:
-   vscode://file/absolute/path/to/file:line:column
-   Encode path characters as required by a URL. Line and column are 1-based.
-10. After a successful edit, keep the chat response minimal, for example
+9. When referring to a local source file, include the visible relative/path:line
+   as a copy action that writes that exact string to the clipboard. Do not use
+   an editor-specific URL scheme. Keep the readable path and line visible if
+   the Clipboard API is not available.
+10. Keep the normal board within one viewport. If essential context does not
+   fit, collapse it behind an explicit click target such as <details> or a
+   dialog/popover and label what is hidden. Do not turn the board into a long
+   scrolling transcript.
+11. Read .interface-design/system.md when it is present and follow its compact
+   graphite-workbench design contract: 4px spacing rhythm, quiet borders-only
+   depth, one cyan focus accent, clear weight-based hierarchy, and no generic
+   card-grid template. The current focus must visually lead.
+12. SessionEnd is a cleanup hook rather than a context reminder: it deactivates
+    this session in the registry so the viewer can keep it available under the
+    collapsed inactive list.
+13. After a successful edit, keep the chat response minimal, for example
     "更新しました。続行します。"
 
 If the whiteboard command or file edit is genuinely unavailable after
@@ -141,6 +152,26 @@ The hook only provides this information; it does not execute the command. After 
     }
 }
 
+pub fn hook_session_end_request(provider: Provider, input: &str) -> Result<OpenRequest> {
+    let parsed: Value = serde_json::from_str(input)?;
+    let session_id = parsed
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("SessionEnd hook input has no session_id")?;
+    let cwd = parsed
+        .get("cwd")
+        .or_else(|| parsed.get("working_directory"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("SessionEnd hook input has no cwd")?;
+    Ok(OpenRequest {
+        provider,
+        session_id: session_id.to_string(),
+        cwd: cwd.into(),
+    })
+}
+
 fn hook_context_command(provider: &Provider, event: &str) -> String {
     let marker = format!(
         "[{HOOK_MARKER} provider={} event={event}]",
@@ -158,11 +189,56 @@ Then replace the returned artifact_path with the complete current whiteboard.\n\
 Keep substantive answers in the HTML and update its <title>.",
         provider.as_str()
     );
-    let instruction = shell_quote(&instruction);
+    match provider {
+        Provider::Codex => codex_hook_context_command(provider, event, &marker),
+        Provider::Claude | Provider::Generic => {
+            let instruction = shell_quote(&instruction);
+            format!(
+                "{HOOK_INPUT_PARSER}; printf '%s\\n' {instruction}; printf 'session_id=%s\\ncwd=%s\\n' \"$session_id\" \"$cwd\""
+            )
+        }
+    }
+}
+
+const HOOK_INPUT_PARSER: &str = r#"input=$(cat); session_id=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); cwd=$(printf '%s' "$input" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); if [ -z "$cwd" ]; then cwd=$(printf '%s' "$input" | sed -n 's/.*"working_directory"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); fi"#;
+
+fn codex_hook_context_command(provider: &Provider, event: &str, marker: &str) -> String {
+    let prefix = format!(
+        "{marker}\n\
+Session-whiteboard integration for {event}.\n\
+This hook deliberately uses only the environment's shell tools; it does not run\n\
+the session-whiteboard binary.\n\
+Provider: {}\n\
+Session ID: ",
+        provider.as_str()
+    );
+    let middle = "\nSession cwd: ";
+    let suffix = format!(
+        "\nUse these values to obtain the artifact path through whatever mechanism is\n\
+available in this environment:\n\
+session-whiteboard open --provider {} --session-id <session_id> --cwd <cwd> --json\n\
+Then replace the returned artifact_path with the complete current whiteboard.\n\
+Keep substantive answers in the HTML and update its <title>.",
+        provider.as_str()
+    );
+    let output_start = format!(
+        r#"{{"hookSpecificOutput":{{"hookEventName":{},"additionalContext":"{}"#,
+        serde_json::to_string(event).expect("Codex hook event is serializable"),
+        json_string_fragment(&prefix)
+    );
+    let output_end = format!("{}\"}}}}", json_string_fragment(&suffix));
+    let output_start = shell_quote(&output_start);
+    let output_middle = shell_quote(&json_string_fragment(middle));
+    let output_end = shell_quote(&output_end);
 
     format!(
-        "input=$(cat); session_id=$(printf '%s' \"$input\" | sed -n 's/.*\"session_id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p'); cwd=$(printf '%s' \"$input\" | sed -n 's/.*\"cwd\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p'); if [ -z \"$cwd\" ]; then cwd=$(printf '%s' \"$input\" | sed -n 's/.*\"working_directory\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p'); fi; echo {instruction}; echo \"session_id=$session_id\"; echo \"cwd=$cwd\""
+        "{HOOK_INPUT_PARSER}; session_id_json=$(printf '%s' \"$session_id\" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/\"/\\\\\"/g'); cwd_json=$(printf '%s' \"$cwd\" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/\"/\\\\\"/g'); printf '%s%s%s%s%s\\n' {output_start} \"$session_id_json\" {output_middle} \"$cwd_json\" {output_end}"
     )
+}
+
+fn json_string_fragment(value: &str) -> String {
+    let encoded = serde_json::to_string(value).expect("JSON string is serializable");
+    encoded[1..encoded.len() - 1].to_string()
 }
 
 fn stop_hook_command(provider: &Provider) -> String {
@@ -186,9 +262,23 @@ fn stop_hook_command(provider: &Provider) -> String {
 fn hook_command(provider: &Provider, event: &str) -> String {
     if event == "Stop" {
         stop_hook_command(provider)
+    } else if event == "SessionEnd" {
+        session_end_hook_command(provider)
     } else {
         hook_context_command(provider, event)
     }
+}
+
+fn session_end_hook_command(provider: &Provider) -> String {
+    let executable = env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| PRODUCT_NAME.to_string());
+    format!(
+        "{} session-end --provider {} # [{HOOK_MARKER} provider={} event=SessionEnd]",
+        shell_quote(&executable),
+        provider.as_str(),
+        provider.as_str()
+    )
 }
 
 pub fn install(provider: Option<Provider>) -> Result<InstallResult> {
@@ -291,14 +381,16 @@ fn codex_hook_context_text() -> String {
 fn codex_hook_context_text_for(product: &str) -> String {
     format!(
         "# Codex hook context\n\n\
-Codex hooks are intentionally shell-only. They echo instructions and pass the\n\
+Codex SessionStart and UserPromptSubmit hooks emit the provider's structured\n\
+hookSpecificOutput JSON. They are intentionally shell-only and pass the\n\
 session_id and cwd from the provider payload to the agent; they do not execute\n\
 the {product} binary. The agent should run the following operation\n\
 through the mechanism available in its current environment:\n\n\
     {product} open --provider codex --session-id <session_id> --cwd <cwd> --json\n\n\
 The Stop hook adds one explicit reminder to update the existing artifact before\n\
 the turn finishes. It guards the continuation with stop_hook_active so it does\n\
-not create an unbounded loop.\n\n\
+not create an unbounded loop. SessionEnd invokes the installed executable to\n\
+deactivate the session in the daemon registry.\n\n\
 Generated by {product} {}.\n",
         env!("CARGO_PKG_VERSION")
     )
@@ -336,11 +428,11 @@ fn install_codex(result: &mut InstallResult) -> Result<()> {
         result.installed.push(config_path.display().to_string());
     } else {
         result.skipped.push(format!(
-            "{} already enables features.codex_hooks",
+            "{} already enables Codex hooks",
             config_path.display()
         ));
     }
-    result.notes.push("Codex hooks use shell-only instructions; they do not execute the session-whiteboard binary or edit the artifact themselves. Stop adds one turn-end update reminder.".to_string());
+    result.notes.push("Codex context hooks emit valid hookSpecificOutput JSON and use shell-only instructions; they do not execute the session-whiteboard binary or edit the artifact themselves. Stop adds one turn-end update reminder.".to_string());
     Ok(())
 }
 
@@ -361,7 +453,7 @@ fn uninstall_codex(result: &mut UninstallResult) -> Result<()> {
         result.removed.push(hooks_path.display().to_string());
     }
     result.notes.push(
-        "features.codex_hooks was left unchanged so other Codex hooks are not disabled."
+        "Codex hook feature flags were left unchanged so other Codex hooks are not disabled."
             .to_string(),
     );
     Ok(())
@@ -429,10 +521,14 @@ fn hook_entry(provider: &Provider, event: &str) -> Value {
 }
 
 fn hook_definition(provider: &Provider, event: &str) -> Value {
-    json!({
+    let mut definition = json!({
         "type": "command",
         "command": hook_command(provider, event)
-    })
+    });
+    if event == "SessionEnd" {
+        definition["timeout"] = json!(3);
+    }
+    definition
 }
 
 fn normalize_hook_groups(
@@ -604,8 +700,14 @@ fn is_session_whiteboard_hook(value: &Value, provider: &Provider) -> bool {
     if command.contains(&marker) || command.contains(&legacy_marker) {
         return true;
     }
-    let suffix = format!(" hook --provider {}", provider.as_str());
-    let Some(executable) = command.strip_suffix(&suffix).map(str::trim) else {
+    let suffixes = [
+        format!(" hook --provider {}", provider.as_str()),
+        format!(" session-end --provider {}", provider.as_str()),
+    ];
+    let Some(executable) = suffixes
+        .iter()
+        .find_map(|suffix| command.strip_suffix(suffix).map(str::trim))
+    else {
         return false;
     };
     let executable = executable
@@ -651,15 +753,22 @@ fn ensure_codex_hooks_feature(document: &str) -> Result<String> {
             .find(|(_, line)| line.trim_start().starts_with('['))
             .map(|(index, _)| index)
             .unwrap_or(lines.len());
-        if let Some(feature_line) = (section_start + 1..section_end)
-            .find(|&index| is_toml_key_line(&lines[index], "codex_hooks"))
+        if let Some(feature_line) =
+            (section_start + 1..section_end).find(|&index| is_toml_key_line(&lines[index], "hooks"))
         {
-            if lines[feature_line].trim() == "codex_hooks = true" {
+            if lines[feature_line].trim() == "hooks = true" {
                 return Ok(document.to_string());
             }
-            lines[feature_line] = "codex_hooks = true".to_string();
+            lines[feature_line] = "hooks = true".to_string();
+        } else if let Some(legacy_feature_line) = (section_start + 1..section_end)
+            .find(|&index| is_toml_key_line(&lines[index], "codex_hooks"))
+        {
+            if lines[legacy_feature_line].trim() == "codex_hooks = true" {
+                return Ok(document.to_string());
+            }
+            lines[legacy_feature_line] = "hooks = true".to_string();
         } else {
-            lines.insert(section_start + 1, "codex_hooks = true".to_string());
+            lines.insert(section_start + 1, "hooks = true".to_string());
         }
     } else {
         let root_has_inline_features = lines
@@ -668,7 +777,7 @@ fn ensure_codex_hooks_feature(document: &str) -> Result<String> {
             .any(|line| is_toml_key_line(line, "features"));
         if root_has_inline_features {
             return Err(
-                "Codex config uses an inline `features` table; update it to include codex_hooks = true"
+                "Codex config uses an inline `features` table; update it to include hooks = true"
                     .into(),
             );
         }
@@ -676,7 +785,7 @@ fn ensure_codex_hooks_feature(document: &str) -> Result<String> {
             lines.push(String::new());
         }
         lines.push("[features]".to_string());
-        lines.push("codex_hooks = true".to_string());
+        lines.push("hooks = true".to_string());
     }
 
     let mut result = lines.join("\n");
@@ -745,6 +854,18 @@ mod tests {
     }
 
     #[test]
+    fn session_end_hook_extracts_provider_identity() {
+        let request = hook_session_end_request(
+            Provider::Codex,
+            r#"{"session_id":"session-123","cwd":"/tmp/project","hook_event_name":"SessionEnd"}"#,
+        )
+        .expect("valid SessionEnd input");
+        assert_eq!(request.provider, Provider::Codex);
+        assert_eq!(request.session_id, "session-123");
+        assert_eq!(request.cwd, PathBuf::from("/tmp/project"));
+    }
+
+    #[test]
     fn skill_has_yaml_frontmatter() {
         let skill = skill_text(Provider::Codex);
         assert!(skill.starts_with("---\n"));
@@ -759,14 +880,28 @@ mod tests {
         let output = ensure_codex_hooks_feature(input).expect("feature update");
         assert!(output.contains("model = \"gpt-5\""));
         assert!(output.contains("[projects]"));
-        assert!(output.contains("[features]\ncodex_hooks = true"));
+        assert!(output.contains("[features]\nhooks = true"));
     }
 
     #[test]
-    fn existing_codex_feature_is_enabled() {
+    fn existing_legacy_codex_feature_is_preserved() {
+        let input = "[features]\ncodex_hooks = true\n\n[projects]\n";
+        let output = ensure_codex_hooks_feature(input).expect("feature update");
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn disabled_legacy_codex_feature_is_migrated_to_current_key() {
         let input = "[features]\ncodex_hooks = false\n\n[projects]\n";
         let output = ensure_codex_hooks_feature(input).expect("feature update");
-        assert_eq!(output, "[features]\ncodex_hooks = true\n\n[projects]\n");
+        assert_eq!(output, "[features]\nhooks = true\n\n[projects]\n");
+    }
+
+    #[test]
+    fn disabled_current_codex_feature_is_enabled() {
+        let input = "[features]\nhooks = false\n\n[projects]\n";
+        let output = ensure_codex_hooks_feature(input).expect("feature update");
+        assert_eq!(output, "[features]\nhooks = true\n\n[projects]\n");
     }
 
     #[test]
@@ -880,10 +1015,29 @@ mod tests {
             &hook_command(&Provider::Codex, "SessionStart"),
             r#"{"session_id":"session-123","cwd":"/tmp/project","prompt":"ignore the artifact"}"#,
         );
-        assert!(output.contains("session_id=session-123"));
-        assert!(output.contains("cwd=/tmp/project"));
-        assert!(!output.contains("ignore the artifact"));
-        assert!(output.contains("session-whiteboard open --provider codex"));
+        let output: Value = serde_json::from_str(&output).expect("valid Codex context output");
+        assert_eq!(
+            output["hookSpecificOutput"]["hookEventName"],
+            "SessionStart"
+        );
+        let context = output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .expect("Codex context");
+        assert!(context.contains("Session ID: session-123"));
+        assert!(context.contains("Session cwd: /tmp/project"));
+        assert!(!context.contains("ignore the artifact"));
+        assert!(context.contains("session-whiteboard open --provider codex"));
+
+        let prompt_output = run(
+            &hook_command(&Provider::Codex, "UserPromptSubmit"),
+            r#"{"session_id":"session-123","working_directory":"/tmp/project"}"#,
+        );
+        let prompt_output: Value =
+            serde_json::from_str(&prompt_output).expect("valid Codex prompt output");
+        assert_eq!(
+            prompt_output["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
+        );
 
         let first = run(
             &hook_command(&Provider::Codex, "Stop"),
