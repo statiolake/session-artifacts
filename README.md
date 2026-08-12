@@ -17,10 +17,15 @@ Rust is the only build dependency:
     session-artifacts install
 
 `install` is a global, one-time provider integration. It installs the skill and
-hook context for Claude Code and Codex. The hooks only inject the provider's
-session ID, cwd, and the command for obtaining the artifact path; they do not
-create or edit the artifact themselves. The command can then be run through
-whatever local, remote, or MCP-backed execution mechanism is available.
+shell-only hook instructions for Claude Code and Codex. The hooks use ubiquitous
+shell tools such as `echo`, pass the provider's session ID and cwd to the agent,
+and tell the agent how to obtain the artifact path. They never invoke the
+`session-artifacts` binary directly, so an agent running inside a container can
+choose the host, proxy, MCP, or other execution mechanism available there.
+
+The hooks are registered for `SessionStart`, `UserPromptSubmit`, and `Stop`.
+The `Stop` hook adds one explicit turn-end reminder to update the existing HTML;
+it allows the turn to finish after that reminder has been delivered once.
 
 Install one provider explicitly when needed:
 

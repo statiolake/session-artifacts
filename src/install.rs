@@ -9,6 +9,9 @@ use crate::model::Provider;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
+const INSTALLED_HOOK_EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "Stop"];
+const HOOK_MARKER: &str = "session-artifacts-hook-v2";
+
 #[derive(Debug, serde::Serialize)]
 pub struct InstallResult {
     pub installed: Vec<String>,
@@ -40,13 +43,13 @@ successful update.
 
 ## Required workflow
 
-1. Read the session-artifact context injected by the provider hook. It contains
-   the provider, the current session ID, the session cwd, and the command for
-   obtaining the artifact path.
-2. Run that command through the execution mechanism that works in the current
-   environment. The hook only gives instructions; it does not create the file.
-   If the first mechanism fails, inspect the available environment and try the
-   appropriate configured mechanism before giving up.
+1. Read the session-artifact reminder injected by the provider hook. It contains
+   the provider, the current session ID, and the session cwd.
+2. Obtain the artifact path through the execution mechanism that works in the
+   current environment. The hook only gives instructions; it does not execute
+   `session-artifacts` and it does not create the file. If a direct executable
+   is unavailable, inspect the available environment and use the appropriate
+   host, proxy, MCP, or other configured mechanism before giving up.
 3. Use the returned artifact_path as a path relative to relative_to. Do not
    create a replacement file in the repository and do not choose another path.
 4. Read the existing HTML, then edit it with the normal file-editing tools.
@@ -133,6 +136,56 @@ The hook only provides this information; it does not execute the command. After 
     }
 }
 
+fn hook_context_command(provider: &Provider, event: &str) -> String {
+    let marker = format!(
+        "[{HOOK_MARKER} provider={} event={event}]",
+        provider.as_str()
+    );
+    let instruction = format!(
+        "{marker}\n\
+Session-artifacts integration for {event}.\n\
+This hook deliberately uses only the environment's shell tools; it does not run\n\
+the session-artifacts binary. The session_id and cwd below are from the provider\n\
+hook payload. Use them to obtain the artifact path through whatever mechanism is\n\
+available in this environment:\n\
+session-artifacts open --provider {} --session-id <session_id> --cwd <cwd> --json\n\
+Then read and update the returned artifact_path. Keep substantive answers in the\n\
+HTML artifact and update its <title>.",
+        provider.as_str()
+    );
+    let instruction = shell_quote(&instruction);
+
+    format!(
+        "input=$(cat); session_id=$(printf '%s' \"$input\" | sed -n 's/.*\"session_id\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p'); cwd=$(printf '%s' \"$input\" | sed -n 's/.*\"cwd\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p'); if [ -z \"$cwd\" ]; then cwd=$(printf '%s' \"$input\" | sed -n 's/.*\"working_directory\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p'); fi; echo {instruction}; echo \"session_id=$session_id\"; echo \"cwd=$cwd\""
+    )
+}
+
+fn stop_hook_command(provider: &Provider) -> String {
+    let marker = format!("[{HOOK_MARKER} provider={} event=Stop]", provider.as_str());
+    let reason = format!(
+        "{marker} Turn-end instruction: check the session artifact before this turn finishes. Did you update it during this turn? If not, update the existing HTML now with the current answer, findings, decisions, questions, and next actions. Do not only describe the update in chat. If the session-artifacts command is unavailable here, find the environment-appropriate way to run `session-artifacts open --provider {}` using the session_id and cwd from the hook context, then edit the returned artifact_path. After checking or updating the artifact, you may finish the turn.",
+        provider.as_str()
+    );
+    let output = serde_json::to_string(&json!({
+        "decision": "block",
+        "reason": reason,
+    }))
+    .expect("stop hook output is serializable");
+
+    format!(
+        "input=$(cat); stop_hook_active=$(printf '%s' \"$input\" | sed -n 's/.*\"stop_hook_active\"[[:space:]]*:[[:space:]]*true.*/true/p'); if [ \"$stop_hook_active\" = true ]; then echo '{{}}'; else echo {}; fi",
+        shell_quote(&output)
+    )
+}
+
+fn hook_command(provider: &Provider, event: &str) -> String {
+    if event == "Stop" {
+        stop_hook_command(provider)
+    } else {
+        hook_context_command(provider, event)
+    }
+}
+
 pub fn install(provider: Option<Provider>) -> Result<InstallResult> {
     let providers = provider
         .map(|provider| vec![provider])
@@ -194,13 +247,8 @@ fn install_claude(result: &mut InstallResult) -> Result<()> {
         .installed
         .push(skill_dir.join("SKILL.md").display().to_string());
 
-    let executable = env::current_exe()?;
-    let command = format!(
-        "{} hook --provider claude",
-        shell_quote(&executable.to_string_lossy())
-    );
     let settings_path = home.join(".claude").join("settings.json");
-    let changed = add_claude_hooks(&settings_path, &command)?;
+    let changed = add_claude_hooks(&settings_path, &Provider::Claude)?;
     if changed {
         result.installed.push(settings_path.display().to_string());
     } else {
@@ -231,13 +279,14 @@ fn uninstall_claude(result: &mut UninstallResult) -> Result<()> {
 fn codex_hook_context_text() -> String {
     format!(
         "# Codex hook context\n\n\
-Codex should provide the current session_id and cwd to an integration hook.\n\
-The hook must tell the agent to run the following operation, without running it\n\
-itself:\n\n\
-    session-artifacts hook --provider codex\n\n\
-The command reads the provider event JSON from stdin and emits the context that\n\
-should be injected into the agent. The hook must not create the artifact or\n\
-assume that the local executable is available in a remote environment.\n\n\
+Codex hooks are intentionally shell-only. They echo instructions and pass the\n\
+session_id and cwd from the provider payload to the agent; they do not execute\n\
+the session-artifacts binary. The agent should run the following operation\n\
+through the mechanism available in its current environment:\n\n\
+    session-artifacts open --provider codex --session-id <session_id> --cwd <cwd> --json\n\n\
+The Stop hook adds one explicit reminder to update the existing artifact before\n\
+the turn finishes. It guards the continuation with stop_hook_active so it does\n\
+not create an unbounded loop.\n\n\
 Generated by session-artifacts {}.\n",
         env!("CARGO_PKG_VERSION")
     )
@@ -256,13 +305,8 @@ fn install_codex(result: &mut InstallResult) -> Result<()> {
     write_if_changed(&hook_template, &content)?;
     result.installed.push(hook_template.display().to_string());
 
-    let executable = env::current_exe()?;
-    let command = format!(
-        "{} hook --provider codex",
-        shell_quote(&executable.to_string_lossy())
-    );
     let hooks_path = home.join(".codex").join("hooks.json");
-    if add_codex_hooks(&hooks_path, &command)? {
+    if add_codex_hooks(&hooks_path, &Provider::Codex)? {
         result.installed.push(hooks_path.display().to_string());
     } else {
         result.skipped.push(format!(
@@ -280,10 +324,7 @@ fn install_codex(result: &mut InstallResult) -> Result<()> {
             config_path.display()
         ));
     }
-    result.notes.push(
-        "Codex SessionStart and UserPromptSubmit hooks inject session context only; they do not create or edit the artifact."
-            .to_string(),
-    );
+    result.notes.push("Codex hooks use shell-only instructions; they do not execute the session-artifacts binary or edit the artifact themselves. Stop adds one turn-end update reminder.".to_string());
     Ok(())
 }
 
@@ -308,84 +349,127 @@ fn uninstall_codex(result: &mut UninstallResult) -> Result<()> {
     Ok(())
 }
 
-fn add_claude_hooks(path: &Path, command: &str) -> Result<bool> {
+fn add_claude_hooks(path: &Path, provider: &Provider) -> Result<bool> {
+    add_provider_hooks(path, provider)
+}
+
+fn add_codex_hooks(path: &Path, provider: &Provider) -> Result<bool> {
+    add_provider_hooks(path, provider)
+}
+
+fn add_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
     let mut settings: Value = if path.exists() {
         serde_json::from_str(&fs::read_to_string(path)?)?
     } else {
         json!({})
     };
+    let before = settings.clone();
     let hooks = settings
         .as_object_mut()
-        .ok_or("Claude settings root must be a JSON object")?
+        .ok_or("hook settings root must be a JSON object")?
         .entry("hooks")
         .or_insert_with(|| json!({}));
     let hooks = hooks
         .as_object_mut()
-        .ok_or("Claude settings hooks must be a JSON object")?;
-    let mut changed = false;
-    for event in ["SessionStart", "UserPromptSubmit"] {
-        let handlers = hooks.entry(event).or_insert_with(|| json!([]));
-        let handlers = handlers
+        .ok_or("hook settings hooks must be a JSON object")?;
+
+    let event_names: Vec<String> = hooks.keys().cloned().collect();
+    for event_name in event_names {
+        let canonical = INSTALLED_HOOK_EVENTS
+            .iter()
+            .find(|event| **event == event_name)
+            .map(|event| hook_definition(provider, event));
+        let Some(groups_value) = hooks.get_mut(&event_name) else {
+            continue;
+        };
+        let groups = groups_value
             .as_array_mut()
-            .ok_or("Claude hook event must be an array")?;
-        let entry = json!({
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": command
-                }
-            ]
-        });
-        if !handlers.iter().any(|existing| existing == &entry) {
-            handlers.push(entry);
-            changed = true;
+            .ok_or("hook event must be an array")?;
+        let event_changed = normalize_hook_groups(groups, provider, canonical.as_ref())?;
+        if event_changed && groups.is_empty() {
+            hooks.remove(&event_name);
         }
     }
-    if changed {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+
+    for event in INSTALLED_HOOK_EVENTS {
+        if !hooks.contains_key(event) {
+            hooks.insert(event.to_string(), json!([hook_entry(provider, event)]));
         }
+    }
+
+    let changed = settings != before;
+    if changed {
         write_if_changed(path, &serde_json::to_string_pretty(&settings)?)?;
     }
     Ok(changed)
 }
 
-fn add_codex_hooks(path: &Path, command: &str) -> Result<bool> {
-    let mut settings: Value = if path.exists() {
-        serde_json::from_str(&fs::read_to_string(path)?)?
-    } else {
-        json!({})
-    };
-    let hooks = settings
-        .as_object_mut()
-        .ok_or("Codex hooks root must be a JSON object")?
-        .entry("hooks")
-        .or_insert_with(|| json!({}));
-    let hooks = hooks
-        .as_object_mut()
-        .ok_or("Codex hooks must be a JSON object")?;
+fn hook_entry(provider: &Provider, event: &str) -> Value {
+    json!({
+        "hooks": [hook_definition(provider, event)]
+    })
+}
+
+fn hook_definition(provider: &Provider, event: &str) -> Value {
+    json!({
+        "type": "command",
+        "command": hook_command(provider, event)
+    })
+}
+
+fn normalize_hook_groups(
+    groups: &mut Vec<Value>,
+    provider: &Provider,
+    canonical: Option<&Value>,
+) -> Result<bool> {
+    let mut remaining_groups = Vec::with_capacity(groups.len());
+    let mut found_canonical = false;
     let mut changed = false;
-    for event in ["SessionStart", "UserPromptSubmit"] {
-        let handlers = hooks.entry(event).or_insert_with(|| json!([]));
-        let handlers = handlers
-            .as_array_mut()
-            .ok_or("Codex hook event must be an array")?;
-        let entry = json!({
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": command
+
+    for mut group in groups.drain(..) {
+        let mut group_changed = false;
+        let remove_group = if let Some(group_object) = group.as_object_mut() {
+            if let Some(group_hooks_value) = group_object.get_mut("hooks") {
+                let group_hooks = group_hooks_value
+                    .as_array_mut()
+                    .ok_or("hook group hooks must be an array")?;
+                let mut remaining_hooks = Vec::with_capacity(group_hooks.len());
+                for hook in group_hooks.drain(..) {
+                    if is_session_artifacts_hook(&hook, provider) {
+                        let is_canonical = !found_canonical
+                            && canonical.is_some_and(|candidate| candidate == &hook);
+                        if is_canonical {
+                            found_canonical = true;
+                            remaining_hooks.push(hook);
+                        } else {
+                            group_changed = true;
+                            changed = true;
+                        }
+                    } else {
+                        remaining_hooks.push(hook);
+                    }
                 }
-            ]
-        });
-        if !handlers.iter().any(|existing| existing == &entry) {
-            handlers.push(entry);
-            changed = true;
+                *group_hooks = remaining_hooks;
+                group_changed && group_hooks.is_empty()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !remove_group {
+            remaining_groups.push(group);
         }
     }
-    if changed {
-        write_if_changed(path, &serde_json::to_string_pretty(&settings)?)?;
+    *groups = remaining_groups;
+
+    if let Some(canonical) = canonical
+        && !found_canonical
+    {
+        groups.push(json!({ "hooks": [canonical.clone()] }));
+        changed = true;
     }
+
     Ok(changed)
 }
 
@@ -428,6 +512,7 @@ fn remove_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
         return Ok(false);
     }
     let mut settings: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+    let before = settings.clone();
     let root = settings
         .as_object_mut()
         .ok_or("hook settings root must be a JSON object")?;
@@ -438,7 +523,6 @@ fn remove_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
         .as_object_mut()
         .ok_or("hook settings hooks must be a JSON object")?;
     let event_names: Vec<String> = hooks.keys().cloned().collect();
-    let mut changed = false;
     for event_name in event_names {
         let Some(groups_value) = hooks.get_mut(&event_name) else {
             continue;
@@ -446,36 +530,7 @@ fn remove_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
         let groups = groups_value
             .as_array_mut()
             .ok_or("hook event must be an array")?;
-        let mut remaining_groups = Vec::with_capacity(groups.len());
-        let mut event_changed = false;
-        for mut group in groups.drain(..) {
-            let mut group_changed = false;
-            let remove_group = if let Some(group_object) = group.as_object_mut() {
-                if let Some(group_hooks_value) = group_object.get_mut("hooks") {
-                    let group_hooks = group_hooks_value
-                        .as_array_mut()
-                        .ok_or("hook group hooks must be an array")?;
-                    let original_len = group_hooks.len();
-                    group_hooks.retain(|hook| !is_session_artifacts_hook(hook, provider));
-                    if group_hooks.len() != original_len {
-                        group_changed = true;
-                        changed = true;
-                    }
-                    group_changed && group_hooks.is_empty()
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if group_changed {
-                event_changed = true;
-            }
-            if !remove_group {
-                remaining_groups.push(group);
-            }
-        }
-        *groups = remaining_groups;
+        let event_changed = normalize_hook_groups(groups, provider, None)?;
         if event_changed && groups.is_empty() {
             hooks.remove(&event_name);
         }
@@ -483,6 +538,7 @@ fn remove_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
     if hooks.is_empty() {
         root.remove("hooks");
     }
+    let changed = settings != before;
     if changed {
         write_if_changed(path, &serde_json::to_string_pretty(&settings)?)?;
     }
@@ -499,6 +555,10 @@ fn is_session_artifacts_hook(value: &Value, provider: &Provider) -> bool {
     let Some(command) = object.get("command").and_then(Value::as_str) else {
         return false;
     };
+    let marker = format!("[{HOOK_MARKER} provider={}", provider.as_str());
+    if command.contains(&marker) {
+        return true;
+    }
     let suffix = format!(" hook --provider {}", provider.as_str());
     let Some(executable) = command.strip_suffix(&suffix).map(str::trim) else {
         return false;
@@ -669,21 +729,133 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_file(&path);
-        assert!(
-            add_codex_hooks(&path, "/tmp/session-artifacts hook --provider codex")
-                .expect("write hooks")
-        );
-        assert!(
-            !add_codex_hooks(&path, "/tmp/session-artifacts hook --provider codex")
-                .expect("second hooks write")
-        );
+        assert!(add_codex_hooks(&path, &Provider::Codex).expect("write hooks"));
+        assert!(!add_codex_hooks(&path, &Provider::Codex).expect("second hooks write"));
+        let settings: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read hooks"))
+            .expect("valid hooks JSON");
+        for event in INSTALLED_HOOK_EVENTS {
+            let command = settings["hooks"][event][0]["hooks"][0]["command"]
+                .as_str()
+                .expect("hook command");
+            assert!(command.contains(HOOK_MARKER));
+            assert!(!command.contains("/tmp/session-artifacts"));
+        }
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn installing_hooks_migrates_legacy_binary_commands_and_preserves_other_hooks() {
+        let path = std::env::temp_dir().join(format!(
+            "session-artifacts-hooks-migration-test-{}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let settings = json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "'/tmp/session-artifacts' hook --provider codex"
+                        },
+                        {
+                            "type": "command",
+                            "command": "other-hook"
+                        }
+                    ]
+                }],
+                "UserPromptSubmit": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "'/tmp/session-artifacts' hook --provider codex"
+                    }]
+                }]
+            }
+        });
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&settings).expect("serialize hooks"),
+        )
+        .expect("write hooks");
+
+        assert!(add_codex_hooks(&path, &Provider::Codex).expect("migrate hooks"));
         let settings: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read hooks"))
             .expect("valid hooks JSON");
         assert_eq!(
-            settings["hooks"]["SessionStart"][0]["hooks"][0]["type"],
-            "command"
+            settings["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+            "other-hook"
         );
+        for event in INSTALLED_HOOK_EVENTS {
+            let commands = settings["hooks"][event]
+                .as_array()
+                .expect("event groups")
+                .iter()
+                .flat_map(|group| group["hooks"].as_array().into_iter().flatten())
+                .filter_map(|hook| hook["command"].as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                commands
+                    .iter()
+                    .filter(|command| command.contains(HOOK_MARKER))
+                    .count(),
+                1
+            );
+        }
         let _ = fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_hooks_pass_only_session_metadata_and_stop_once() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        fn run(command: &str, input: &str) -> String {
+            let mut child = Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("spawn shell hook");
+            child
+                .stdin
+                .take()
+                .expect("hook stdin")
+                .write_all(input.as_bytes())
+                .expect("write hook input");
+            let output = child.wait_with_output().expect("read shell hook");
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).expect("hook output is utf-8")
+        }
+
+        let output = run(
+            &hook_command(&Provider::Codex, "SessionStart"),
+            r#"{"session_id":"session-123","cwd":"/tmp/project","prompt":"ignore the artifact"}"#,
+        );
+        assert!(output.contains("session_id=session-123"));
+        assert!(output.contains("cwd=/tmp/project"));
+        assert!(!output.contains("ignore the artifact"));
+        assert!(output.contains("session-artifacts open --provider codex"));
+
+        let first = run(
+            &hook_command(&Provider::Codex, "Stop"),
+            r#"{"stop_hook_active":false}"#,
+        );
+        let first: Value = serde_json::from_str(&first).expect("valid first stop output");
+        assert_eq!(first["decision"], "block");
+        assert!(
+            first["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Did you update it")
+        );
+
+        let second = run(
+            &hook_command(&Provider::Codex, "Stop"),
+            r#"{"stop_hook_active":true}"#,
+        );
+        assert_eq!(second.trim(), "{}");
     }
 
     #[test]
@@ -728,6 +900,10 @@ mod tests {
                 "Stop": [
                     {
                         "hooks": [
+                            {
+                                "type": "command",
+                                "command": hook_command(&Provider::Codex, "Stop")
+                            },
                             {
                                 "type": "command",
                                 "command": "other-tool session-artifacts hook --provider codex"
