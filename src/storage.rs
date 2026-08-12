@@ -39,7 +39,8 @@ pub fn registry_path() -> PathBuf {
 
 pub fn load_registry() -> Result<Registry> {
     let path = registry_path();
-    let path = if path.exists() {
+    let loaded_from_legacy_path = !path.exists();
+    let path = if !loaded_from_legacy_path {
         path
     } else {
         let legacy_path = legacy_app_data_dir().join("registry.json");
@@ -53,7 +54,13 @@ pub fn load_registry() -> Result<Registry> {
         return Ok(Registry::default());
     }
     let content = fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&content)?)
+    let mut registry: Registry = serde_json::from_str(&content)?;
+    if migrate_registry(&mut registry) || loaded_from_legacy_path {
+        let new_path = registry_path();
+        fs::create_dir_all(new_path.parent().expect("registry has a parent"))?;
+        fs::write(&new_path, serde_json::to_vec_pretty(&registry)?)?;
+    }
+    Ok(registry)
 }
 
 pub fn save_registry(registry: &Registry) -> Result<()> {
@@ -106,6 +113,29 @@ fn migrate_legacy_artifact_path(cwd: &Path, relative_path: &Path) -> Result<Path
         fs::rename(old_absolute_path, &new_absolute_path)?;
     }
     Ok(new_relative_path)
+}
+
+fn migrate_registry(registry: &mut Registry) -> bool {
+    let mut changed = false;
+    for record in &mut registry.sessions {
+        if let Some(migrated_cwd) = migrate_legacy_cwd(&record.cwd) {
+            record.cwd = migrated_cwd;
+            changed = true;
+        }
+        if let Ok(suffix) = record.artifact_path.strip_prefix(LEGACY_ARTIFACT_ROOT) {
+            record.artifact_path = PathBuf::from(ARTIFACT_ROOT).join(suffix);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn migrate_legacy_cwd(cwd: &Path) -> Option<PathBuf> {
+    if cwd.exists() || cwd.file_name()?.to_str()? != "session-artifacts" {
+        return None;
+    }
+    let migrated = cwd.with_file_name("session-whiteboard");
+    migrated.exists().then_some(migrated)
 }
 
 pub fn prepare_artifact(
@@ -439,6 +469,39 @@ mod tests {
         assert!(!legacy_absolute_path.exists());
 
         let _ = fs::remove_dir_all(cwd);
+    }
+
+    #[test]
+    fn registry_migrates_a_renamed_checkout() {
+        let parent = std::env::temp_dir().join(format!(
+            "session-whiteboard-registry-migration-test-{}",
+            std::process::id()
+        ));
+        let old_cwd = parent.join("session-artifacts");
+        let new_cwd = parent.join("session-whiteboard");
+        let _ = fs::remove_dir_all(&parent);
+        fs::create_dir_all(&new_cwd).expect("create renamed checkout");
+        let mut registry = Registry {
+            sessions: vec![SessionRecord {
+                key: "codex-moved".to_string(),
+                provider: Provider::Codex,
+                session_id: "moved-session".to_string(),
+                cwd: old_cwd,
+                artifact_path: PathBuf::from(".session-artifacts/codex/moved.html"),
+                active: true,
+                created_at: now(),
+                updated_at: now(),
+            }],
+        };
+
+        assert!(migrate_registry(&mut registry));
+        assert_eq!(registry.sessions[0].cwd, new_cwd);
+        assert_eq!(
+            registry.sessions[0].artifact_path,
+            PathBuf::from(".session-whiteboard/codex/moved.html")
+        );
+
+        let _ = fs::remove_dir_all(parent);
     }
 
     #[test]
