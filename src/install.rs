@@ -154,8 +154,8 @@ the session-whiteboard binary. The session_id and cwd below are from the provide
 hook payload. Use them to obtain the artifact path through whatever mechanism is\n\
 available in this environment:\n\
 session-whiteboard open --provider {} --session-id <session_id> --cwd <cwd> --json\n\
-Then read and update the returned artifact_path. Keep substantive answers in the\n\
-HTML artifact and update its <title>.",
+Then replace the returned artifact_path with the complete current whiteboard.\n\
+Keep substantive answers in the HTML and update its <title>.",
         provider.as_str()
     );
     let instruction = shell_quote(&instruction);
