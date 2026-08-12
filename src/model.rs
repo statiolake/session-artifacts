@@ -46,10 +46,8 @@ pub struct BrowseResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CloseResponse {
-    pub provider: Provider,
-    pub session_id: String,
-    pub closed: bool,
+pub struct ViewerSelectRequest {
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +66,6 @@ pub struct SessionRecord {
     pub session_id: String,
     pub cwd: PathBuf,
     pub artifact_path: PathBuf,
-    pub active: bool,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -86,7 +83,6 @@ pub struct SessionSummary {
     pub cwd: PathBuf,
     pub artifact_path: PathBuf,
     pub title: String,
-    pub active: bool,
     pub updated_at: u64,
     pub version: String,
 }

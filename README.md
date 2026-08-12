@@ -92,15 +92,11 @@ sessions from the sidebar. Since a generic OS browser launcher cannot reliably
 reuse an arbitrary existing tab, `browse` may open another tab; use `prepare`
 for the non-duplicating keep-alive-aware behavior.
 
-When a provider session ends, mark it inactive while retaining its HTML for a
-future resume:
-
-    session-whiteboard close --provider codex --session-id <id> --cwd "$PWD"
-
-The browser hides inactive sessions. Re-opening the same provider/session/cwd
-reactivates the same file. The sidebar also has a per-session inactive action
-for recovering from a missed provider exit hook. Deletion is intentionally not
-automatic in this MVP.
+The registry is a known-board index rather than an active/inactive session
+lifecycle. The viewer keeps known boards in one list and orders them by the
+latest modification time of each HTML file. Preparing the same provider,
+session, and cwd reuses the same file. Deletion is intentionally not automatic
+in this MVP.
 
 To explicitly clean (delete) the HTML and its registry record:
 
@@ -110,18 +106,19 @@ To explicitly clean (delete) the HTML and its registry record:
 
 The first `prepare` automatically starts the daemon and opens the navigation shell
 when no viewer connection is present.
-The sidebar groups active sessions by their session-start cwd and the main pane
-live-reloads the selected HTML whiteboard. Deactivated sessions remain available
-under a collapsed inactive toggle, and active sessions are ordered by the
-whiteboard file's latest modification time. Artifact changes are detected by the
-daemon's filesystem watcher and pushed to the viewer for immediate reload. A
-changed session that is not currently selected receives an unread marker until
-it is opened. Session preparation refreshes the sidebar but does not
-automatically switch the current selection. `prepare` reopens the viewer when
-its event connection is gone; `browse` deliberately invokes the browser
-launcher even when a viewer is already open. Browser/OS launchers cannot force
-reuse of an arbitrary already-open tab across all browser families, so
-keep-alive-aware preparation is the single-tab-friendly path.
+The sidebar shows one compact chronological list keyed by the session-start cwd,
+and the main pane shows the selected whiteboard without a separate header. It
+live-reloads the selected HTML whiteboard. Artifact changes are detected by the
+daemon's filesystem watcher and pushed to the viewer for immediate reload; the
+sidebar is reordered at the same time. At daemon startup, only artifacts
+modified within roughly the last day are watched. Selecting a board adds its
+artifact to the watch set. A changed session that is not currently selected
+receives an unread marker until it is opened. Session preparation refreshes the
+sidebar but does not automatically switch the current selection. `prepare`
+reopens the viewer when its event connection is gone; `browse` deliberately
+invokes the browser launcher even when a viewer is already open. Browser/OS
+launchers cannot force reuse of an arbitrary already-open tab across all browser
+families, so keep-alive-aware preparation is the single-tab-friendly path.
 
 Manage the background daemon explicitly when needed:
 

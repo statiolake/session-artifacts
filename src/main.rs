@@ -32,7 +32,7 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         port: u16,
     },
-    /// Prepare or reactivate a session and return its HTML whiteboard path.
+    /// Prepare a session and return its HTML whiteboard path.
     Prepare {
         #[arg(long, value_enum)]
         provider: ProviderArg,
@@ -47,17 +47,6 @@ enum Command {
     /// Start the managed daemon and invoke the browser viewer.
     Browse {
         /// Emit only JSON, suitable for an integration adapter.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Mark a session inactive. The HTML remains on disk for resume.
-    Close {
-        #[arg(long, value_enum)]
-        provider: ProviderArg,
-        #[arg(long)]
-        session_id: String,
-        #[arg(long, default_value = ".")]
-        cwd: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -180,25 +169,6 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             } else {
                 println!("viewer_url={}", response.viewer_url);
                 println!("opened={}", response.opened);
-            }
-            Ok(())
-        }
-        Command::Close {
-            provider,
-            session_id,
-            cwd,
-            json,
-        } => {
-            let cwd = std::fs::canonicalize(cwd)?;
-            let response = Daemon::close_via_client(&SessionRequest {
-                provider: provider.into(),
-                session_id,
-                cwd,
-            })?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&response)?);
-            } else {
-                println!("closed={}", response.closed);
             }
             Ok(())
         }

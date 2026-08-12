@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::model::{
-    BrowseResponse, CleanResponse, CloseResponse, DaemonInfo, HealthResponse, PrepareResponse,
-    Registry, SessionRecord, SessionRequest,
+    BrowseResponse, CleanResponse, DaemonInfo, HealthResponse, PrepareResponse, Registry,
+    SessionRecord, SessionRequest, ViewerSelectRequest,
 };
 use crate::storage;
 
@@ -33,7 +33,7 @@ struct AppState {
 #[derive(Default)]
 struct EventHub {
     clients: Mutex<Vec<Sender<Value>>>,
-    active_viewers: Mutex<usize>,
+    connected_viewers: Mutex<usize>,
     last_viewer_seen: Mutex<Option<Instant>>,
 }
 
@@ -46,8 +46,8 @@ impl EventHub {
         if let Ok(mut clients) = self.clients.lock() {
             clients.push(sender);
         }
-        if let Ok(mut active_viewers) = self.active_viewers.lock() {
-            *active_viewers += 1;
+        if let Ok(mut connected_viewers) = self.connected_viewers.lock() {
+            *connected_viewers += 1;
         }
         receiver
     }
@@ -60,11 +60,11 @@ impl EventHub {
     }
 
     fn viewer_is_connected(&self) -> bool {
-        let active = self
-            .active_viewers
+        let has_connected_viewer = self
+            .connected_viewers
             .lock()
-            .is_ok_and(|active_viewers| *active_viewers > 0);
-        active
+            .is_ok_and(|connected_viewers| *connected_viewers > 0);
+        has_connected_viewer
             || self
                 .last_viewer_seen
                 .lock()
@@ -78,8 +78,8 @@ impl EventHub {
     }
 
     fn disconnect_viewer(&self) {
-        if let Ok(mut active_viewers) = self.active_viewers.lock() {
-            *active_viewers = active_viewers.saturating_sub(1);
+        if let Ok(mut connected_viewers) = self.connected_viewers.lock() {
+            *connected_viewers = connected_viewers.saturating_sub(1);
         }
     }
 
@@ -94,15 +94,36 @@ impl EventHub {
 struct WatcherState {
     watcher: RecommendedWatcher,
     roots: HashSet<PathBuf>,
+    artifacts: HashSet<PathBuf>,
 }
 
 impl WatcherState {
     fn watch_record(&mut self, record: &SessionRecord) -> Result<()> {
-        let root = record.cwd.join(".session-whiteboard");
-        if root.exists() && self.roots.insert(root.clone()) {
-            self.watcher.watch(&root, RecursiveMode::Recursive)?;
+        let artifact = record.cwd.join(&record.artifact_path);
+        if !artifact.is_file() {
+            return Ok(());
+        }
+        let Some(root) = artifact.parent() else {
+            return Ok(());
+        };
+        if !self.roots.contains(root) {
+            self.watcher.watch(root, RecursiveMode::NonRecursive)?;
+            self.roots.insert(root.to_path_buf());
+        }
+        self.artifacts.insert(artifact);
+        Ok(())
+    }
+
+    fn watch_recent_record(&mut self, record: &SessionRecord) -> Result<()> {
+        let artifact = record.cwd.join(&record.artifact_path);
+        if storage::file_age(&artifact).is_ok_and(|age| age <= Duration::from_secs(24 * 60 * 60)) {
+            self.watch_record(record)?;
         }
         Ok(())
+    }
+
+    fn watched_artifacts(&self) -> &HashSet<PathBuf> {
+        &self.artifacts
     }
 }
 
@@ -122,15 +143,16 @@ impl Daemon {
         let watcher = Arc::new(Mutex::new(WatcherState {
             watcher,
             roots: HashSet::new(),
+            artifacts: HashSet::new(),
         }));
         if let Ok(mut watcher_state) = watcher.lock() {
             for record in &registry.sessions {
-                watcher_state.watch_record(record)?;
+                watcher_state.watch_recent_record(record)?;
             }
         }
         let events = Arc::new(EventHub {
             clients: Mutex::new(Vec::new()),
-            active_viewers: Mutex::new(0),
+            connected_viewers: Mutex::new(0),
             last_viewer_seen: Mutex::new(None),
         });
         let state = Arc::new(Mutex::new(AppState {
@@ -208,12 +230,6 @@ impl Daemon {
         Ok(serde_json::from_slice(&response)?)
     }
 
-    pub fn close_via_client(request: &SessionRequest) -> Result<CloseResponse> {
-        let body = serde_json::to_vec(request)?;
-        let response = client_request("POST", "/api/sessions/close", &body)?;
-        Ok(serde_json::from_slice(&response)?)
-    }
-
     pub fn clean_via_client(request: &SessionRequest) -> Result<CleanResponse> {
         let body = serde_json::to_vec(request)?;
         let response = client_request("POST", "/api/sessions/clean", &body)?;
@@ -239,34 +255,46 @@ fn watch_files(receiver: Receiver<notify::Result<Event>>, state: Arc<Mutex<AppSt
         };
         for path in event.paths {
             thread::sleep(Duration::from_millis(30));
-            let Some((key, version, events)) = changed_artifact(&state, &path) else {
-                continue;
-            };
-            if versions.get(&key) == Some(&version) {
-                continue;
+            for (key, version, events) in changed_artifacts(&state, &path) {
+                if versions.get(&key) == Some(&version) {
+                    continue;
+                }
+                versions.insert(key.clone(), version.clone());
+                events.publish(json!({
+                    "type": "artifact_updated",
+                    "key": key,
+                    "version": version,
+                }));
             }
-            versions.insert(key.clone(), version.clone());
-            events.publish(json!({
-                "type": "artifact_updated",
-                "key": key,
-                "version": version,
-            }));
         }
     }
 }
 
-fn changed_artifact(
+fn changed_artifacts(
     state: &Arc<Mutex<AppState>>,
     path: &Path,
-) -> Option<(String, String, Arc<EventHub>)> {
-    let state = state.lock().ok()?;
-    let record = state.registry.sessions.iter().find(|record| {
-        let artifact = record.cwd.join(&record.artifact_path);
-        artifact == path
-    })?;
-    let artifact = record.cwd.join(&record.artifact_path);
-    let version = storage::file_version(&artifact).ok()?;
-    Some((record.key.clone(), version, Arc::clone(&state.events)))
+) -> Vec<(String, String, Arc<EventHub>)> {
+    let Ok(state) = state.lock() else {
+        return Vec::new();
+    };
+    let Ok(watcher) = state.watcher.lock() else {
+        return Vec::new();
+    };
+    let watched = watcher.watched_artifacts().clone();
+    state
+        .registry
+        .sessions
+        .iter()
+        .filter_map(|record| {
+            let artifact = record.cwd.join(&record.artifact_path);
+            if !watched.contains(&artifact) || (artifact != path && artifact.parent() != Some(path))
+            {
+                return None;
+            }
+            let version = storage::file_version(&artifact).ok()?;
+            Some((record.key.clone(), version, Arc::clone(&state.events)))
+        })
+        .collect()
 }
 
 fn respond_events(
@@ -327,6 +355,22 @@ fn handle_request(
                 })?,
             )
         }
+        (Method::Post, "/api/viewer/select") => {
+            let mut body = String::new();
+            request.as_reader().read_to_string(&mut body)?;
+            let selection: ViewerSelectRequest = serde_json::from_str(&body)?;
+            let state = state.lock().map_err(|_| "daemon state lock poisoned")?;
+            let Some(record) = storage::find_record(&state.registry, &selection.key).cloned()
+            else {
+                return respond_error(request, 404, "unknown session");
+            };
+            if let Ok(mut watcher) = state.watcher.lock()
+                && let Err(error) = watcher.watch_record(&record)
+            {
+                eprintln!("session-whiteboard daemon: could not watch selected artifact: {error}");
+            }
+            respond_json(request, br#"{"ok":true}"#.to_vec())
+        }
         (Method::Post, "/api/daemon/stop") => {
             let response = respond_json(request, br#"{"ok":true}"#.to_vec());
             server.unblock();
@@ -372,22 +416,6 @@ fn handle_request(
             };
             respond_json(request, serde_json::to_vec(&response)?)
         }
-        (Method::Post, "/api/sessions/close") => {
-            let mut body = String::new();
-            request.as_reader().read_to_string(&mut body)?;
-            let close_request: SessionRequest = serde_json::from_str(&body)?;
-            let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
-            let closed = storage::mark_closed(&mut state.registry, &close_request);
-            storage::save_registry(&state.registry)?;
-            let events = Arc::clone(&state.events);
-            publish_sessions_changed(&events);
-            let response = CloseResponse {
-                provider: close_request.provider,
-                session_id: close_request.session_id,
-                closed,
-            };
-            respond_json(request, serde_json::to_vec(&response)?)
-        }
         (Method::Post, "/api/sessions/clean") => {
             let mut body = String::new();
             request.as_reader().read_to_string(&mut body)?;
@@ -420,6 +448,12 @@ fn handle_request(
             let Some(record) = storage::find_record(&state.registry, key) else {
                 return respond_error(request, 404, "unknown session");
             };
+            let record = record.clone();
+            if let Ok(mut watcher) = state.watcher.lock()
+                && let Err(error) = watcher.watch_record(&record)
+            {
+                eprintln!("session-whiteboard daemon: could not watch displayed artifact: {error}");
+            }
             let bytes = fs::read(record.cwd.join(&record.artifact_path))?;
             respond_bytes(request, bytes, "text/html; charset=utf-8")
         }

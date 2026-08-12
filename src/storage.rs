@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 
@@ -159,7 +159,6 @@ pub fn prepare_artifact(
             && record.cwd == request.cwd
     }) {
         record.artifact_path = migrate_legacy_artifact_path(&request.cwd, &record.artifact_path)?;
-        record.active = true;
         record.updated_at = timestamp;
         record.clone()
     } else {
@@ -188,7 +187,6 @@ pub fn prepare_artifact(
             session_id: request.session_id.clone(),
             cwd: request.cwd.clone(),
             artifact_path: relative_path,
-            active: true,
             created_at: timestamp,
             updated_at: timestamp,
         };
@@ -201,20 +199,6 @@ pub fn prepare_artifact(
     }
 
     Ok((record, warning))
-}
-
-pub fn mark_closed(registry: &mut Registry, request: &SessionRequest) -> bool {
-    if let Some(record) = registry.sessions.iter_mut().find(|record| {
-        record.provider == request.provider
-            && record.session_id == request.session_id
-            && record.cwd == request.cwd
-    }) {
-        record.active = false;
-        record.updated_at = now();
-        true
-    } else {
-        false
-    }
 }
 
 pub fn clean_record(
@@ -273,7 +257,6 @@ pub fn summarize(record: &SessionRecord) -> Result<SessionSummary> {
         cwd: record.cwd.clone(),
         artifact_path: record.artifact_path.clone(),
         title,
-        active: record.active,
         updated_at: record.updated_at,
         version: file_version(&absolute_path).unwrap_or_else(|_| "missing".to_string()),
     })
@@ -287,6 +270,13 @@ pub fn file_version(path: &Path) -> Result<String> {
         .unwrap_or_default()
         .as_nanos();
     Ok(format!("{modified}-{}", metadata.len()))
+}
+
+pub fn file_age(path: &Path) -> Result<Duration> {
+    let modified = fs::metadata(path)?.modified()?;
+    Ok(SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or_default())
 }
 
 pub fn read_title(path: &Path) -> Result<String> {
@@ -501,7 +491,6 @@ mod tests {
                 session_id: "moved-session".to_string(),
                 cwd: old_cwd,
                 artifact_path: PathBuf::from(".session-artifacts/codex/moved.html"),
-                active: true,
                 created_at: now(),
                 updated_at: now(),
             }],
@@ -540,7 +529,6 @@ mod tests {
                 session_id: "delete-test".to_string(),
                 cwd: cwd.clone(),
                 artifact_path,
-                active: false,
                 created_at: now(),
                 updated_at: now(),
             }],

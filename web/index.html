@@ -50,7 +50,7 @@
       background: var(--panel);
       border-right: 1px solid var(--line);
     }
-    .section-label, .group-title, .path {
+    .section-label {
       font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
       letter-spacing: .08em;
       text-transform: uppercase;
@@ -58,9 +58,20 @@
     .sessions {
       flex: 1 1 auto;
       min-height: 0;
-      overflow-y: auto;
+      overflow-y: scroll;
       padding: 8px 6px;
+      scrollbar-gutter: stable;
       scrollbar-color: var(--panel-raised) transparent;
+      scrollbar-width: thin;
+    }
+    .sessions::-webkit-scrollbar { width: 8px; }
+    .sessions::-webkit-scrollbar-track { background: transparent; }
+    .sessions::-webkit-scrollbar-thumb {
+      min-height: 32px;
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: var(--panel-raised);
+      background-clip: padding-box;
     }
     .section-label {
       display: flex;
@@ -73,22 +84,24 @@
       color: var(--ink-secondary);
       font-variant-numeric: tabular-nums;
     }
-    .group { margin: 0 0 8px; }
-    .group-title {
+    .session-project {
       display: flex;
       align-items: baseline;
       gap: 8px;
+      min-width: 0;
       overflow: hidden;
-      padding: 3px 8px 4px;
+      margin-bottom: 3px;
       color: var(--ink-muted);
       letter-spacing: 0;
       text-transform: none;
     }
     .group-name {
       flex: none;
+      max-width: 45%;
       overflow: hidden;
       color: var(--ink-secondary);
-      font: 650 11px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .04em;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
@@ -96,8 +109,8 @@
       min-width: 0;
       overflow: hidden;
       color: var(--ink-muted);
-      direction: rtl;
-      font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      direction: ltr;
+      font: 10px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       text-align: left;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -105,7 +118,7 @@
     .session {
       display: block;
       width: 100%;
-      min-height: 42px;
+      min-height: 58px;
       padding: 6px 8px;
       border: 1px solid transparent;
       border-radius: 5px;
@@ -115,38 +128,11 @@
       cursor: pointer;
       transition: background-color 140ms ease-out, border-color 140ms ease-out;
     }
-    .session-row {
-      display: flex;
-      align-items: stretch;
-      gap: 3px;
-    }
-    .session-row .session { flex: 1 1 auto; min-width: 0; }
-    .session-deactivate {
-      flex: none;
-      width: 28px;
-      padding: 0;
-      border: 1px solid transparent;
-      border-radius: 4px;
-      color: var(--ink-muted);
-      background: transparent;
-      cursor: pointer;
-      font-size: 15px;
-      line-height: 1;
-      opacity: .55;
-    }
-    .session-row:hover .session-deactivate,
-    .session-deactivate:focus-visible { opacity: 1; }
-    .session-deactivate:hover {
-      border-color: rgba(166,109,36,.35);
-      color: var(--warning);
-      background: rgba(166,109,36,.06);
-    }
     .session:hover { background: rgba(41,49,48,.045); }
-    .session.active {
+    .session.selected {
       background: rgba(23,106,131,.08);
       border-color: rgba(23,106,131,.25);
     }
-    .session.inactive { color: var(--ink-secondary); }
     .session-title {
       display: flex;
       align-items: center;
@@ -172,7 +158,6 @@
       background: var(--focus);
       box-shadow: 0 0 0 2px rgba(23,106,131,.13);
     }
-    .session.inactive .session-title { color: var(--ink-secondary); }
     .session-meta {
       display: flex;
       gap: 7px;
@@ -188,38 +173,6 @@
       color: var(--ink-muted);
       line-height: 1.5;
     }
-    .inactive-section {
-      margin-top: 10px;
-      border-top: 1px solid var(--line-soft);
-    }
-    .inactive-section summary {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 8px 5px;
-      color: var(--ink-muted);
-      cursor: pointer;
-      list-style: none;
-    }
-    .inactive-section summary::-webkit-details-marker { display: none; }
-    .inactive-section summary::before {
-      margin-right: 6px;
-      color: var(--ink-secondary);
-      content: "▸";
-    }
-    .inactive-section[open] summary::before { content: "▾"; }
-    .inactive-label {
-      display: flex;
-      align-items: center;
-      flex: 1;
-      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-    .inactive-count {
-      color: var(--ink-muted);
-      font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
     .content {
       display: flex;
       flex-direction: column;
@@ -227,38 +180,6 @@
       min-height: 0;
       overflow: hidden;
       background: var(--canvas);
-    }
-    .content-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      min-height: 52px;
-      padding: 0 16px;
-      border-bottom: 1px solid var(--line);
-    }
-    .path {
-      overflow: hidden;
-      color: var(--ink-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .path strong { color: var(--ink-secondary); font-weight: 600; }
-    .live {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      flex: none;
-      color: var(--ink-muted);
-      font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      text-transform: uppercase;
-    }
-    .live::before {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--focus);
-      content: "";
     }
     .frame-wrap { position: relative; flex: 1; min-height: 0; }
     #artifact {
@@ -304,9 +225,7 @@
       .shell { grid-template-columns: 1fr; grid-template-rows: minmax(158px, 34vh) minmax(0, 1fr); }
       .sidebar { min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); }
       .sessions { padding: 6px; }
-      .group { margin-bottom: 5px; }
-      .session { min-height: 40px; padding-top: 5px; padding-bottom: 5px; }
-      .content-head { padding: 0 12px; }
+      .session { min-height: 58px; padding-top: 5px; padding-bottom: 5px; }
     }
   </style>
 </head>
@@ -316,15 +235,11 @@
       <nav id="sessions" class="sessions" aria-label="Session whiteboards"></nav>
     </aside>
     <main class="content">
-      <header class="content-head">
-        <div id="current-path" class="path"><strong>WHITEBOARD</strong> / SELECT A SESSION</div>
-        <div id="live-indicator" class="live">waiting</div>
-      </header>
       <div class="frame-wrap">
         <section id="welcome" class="welcome">
           <div>
             <div class="welcome-kicker">Current context</div>
-            <h2>Nothing is active yet</h2>
+            <h2>No whiteboard selected</h2>
             <p>When an agent opens a session whiteboard, it will appear in the navigation rail. Select it to follow the live view.</p>
           </div>
         </section>
@@ -336,14 +251,11 @@
     const sessionList = document.querySelector('#sessions');
     const frame = document.querySelector('#artifact');
     const welcome = document.querySelector('#welcome');
-    const currentPath = document.querySelector('#current-path');
-    const liveIndicator = document.querySelector('#live-indicator');
     let sessions = [];
     let selected = null;
     let selectedVersion = null;
     let requestedSession = new URLSearchParams(window.location.search).get('session');
     let eventsConnected = false;
-    let inactiveOpen = false;
     const unread = new Set();
     const readVersions = new Map();
 
@@ -364,36 +276,22 @@
       return Number.isFinite(parsed) ? parsed : 0;
     }
 
-    function groupKey(path) { return path || '(unknown cwd)'; }
-
-    function renderGroups(items) {
-      const groups = new Map();
-      for (const session of items) {
-        const key = groupKey(session.cwd);
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(session);
-      }
-      return Array.from(groups.entries()).map(function(entry) {
-        const cwd = entry[0];
-        const buttons = entry[1].map(function(s) {
-          const isUnread = unread.has(s.key);
-          const selectButton = '<button class="session ' + (s.key === selected ? 'active ' : '') + (s.active ? '' : 'inactive') +
-            '" data-key="' + esc(s.key) + '" aria-pressed="' + (s.key === selected ? 'true' : 'false') + '">' +
-            '<div class="session-title"><span class="session-title-text">' + esc(s.title || 'Untitled session') + '</span>' +
-            (isUnread ? '<span class="unread-mark" title="Updated since last open" aria-label="Updated since last open"></span>' : '') + '</div>' +
-            '<div class="session-meta"><span>' + esc(s.provider) + '</span><span>' +
-            esc(String(s.session_id || '').slice(0, 8)) + '</span></div>' +
-            '</button>';
-          const deactivateButton = s.active
-            ? '<button class="session-deactivate" type="button" data-deactivate="' + esc(s.key) + '" title="Mark inactive" aria-label="Mark ' + esc(s.title || 'session') + ' inactive">×</button>'
-            : '';
-          return '<div class="session-row">' + selectButton + deactivateButton + '</div>';
-        }).join('');
-        const normalized = String(cwd || '').replace(/[\\/]+$/, '');
+    function renderSessionRows(items) {
+      return items.map(function(s) {
+        const isUnread = unread.has(s.key);
+        const cwd = String(s.cwd || '');
+        const normalized = cwd.replace(/[\\/]+$/, '');
         const projectName = normalized.split(/[\\/]/).pop() || normalized || '(unknown)';
-        return '<section class="group"><div class="group-title" title="' + esc(cwd) + '">' +
-          '<span class="group-name">' + esc(projectName) + '</span><span class="group-path">' + esc(cwd) + '</span>' +
-          '</div>' + buttons + '</section>';
+        const selectButton = '<button class="session ' + (s.key === selected ? 'selected' : '') +
+          '" data-key="' + esc(s.key) + '" aria-pressed="' + (s.key === selected ? 'true' : 'false') + '">' +
+          '<div class="session-project" title="' + esc(cwd) + '"><span class="group-name">' + esc(projectName) +
+          '</span><span class="group-path">' + esc(cwd) + '</span></div>' +
+          '<div class="session-title">' + (isUnread ? '<span class="unread-mark" title="Updated since last open" aria-label="Updated since last open"></span>' : '') +
+          '<span class="session-title-text">' + esc(s.title || 'Untitled session') + '</span></div>' +
+          '<div class="session-meta"><span>' + esc(s.provider) + '</span><span>' +
+          esc(String(s.session_id || '').slice(0, 8)) + '</span></div>' +
+          '</button>';
+        return selectButton;
       }).join('');
     }
 
@@ -401,51 +299,18 @@
       sessionList.querySelectorAll('.session').forEach(function(button) {
         button.addEventListener('click', function() { select(button.dataset.key); });
       });
-      sessionList.querySelectorAll('.session-deactivate').forEach(function(button) {
-        button.addEventListener('click', function(event) {
-          event.stopPropagation();
-          deactivate(button.dataset.deactivate);
-        });
-      });
     }
 
     function renderSessions() {
-      const active = sessions.filter(function(s) { return s.active; });
-      const inactive = sessions.filter(function(s) { return !s.active; });
       if (!sessions.length) {
         sessionList.innerHTML = '<div class="section-label"><span>Sessions</span><span class="section-count">0</span></div>' +
           '<div class="empty-side">No session whiteboards yet.</div>';
         return;
       }
-      const activeMarkup = active.length
-        ? renderGroups(active)
-        : '<div class="empty-side">No active sessions.</div>';
-      const inactiveMarkup = inactive.length
-        ? '<details class="inactive-section"' + (inactiveOpen ? ' open' : '') +
-          '><summary><span class="inactive-label">Inactive</span><span class="inactive-count">' +
-          inactive.length + '</span></summary><div>' + renderGroups(inactive) + '</div></details>'
-        : '';
       sessionList.innerHTML =
-        '<div class="section-label"><span>Active</span><span class="section-count">' + active.length + '</span></div>' +
-        activeMarkup + inactiveMarkup;
+        '<div class="section-label"><span>Sessions</span><span class="section-count">' + sessions.length + '</span></div>' +
+        renderSessionRows(sessions);
       bindSessionButtons();
-      const inactiveSection = sessionList.querySelector('.inactive-section');
-      if (inactiveSection) {
-        inactiveSection.addEventListener('toggle', function() {
-          inactiveOpen = inactiveSection.open;
-        });
-      }
-    }
-
-    function updateSelectionChrome() {
-      const session = sessions.find(function(s) { return s.key === selected; });
-      if (!session) {
-        currentPath.innerHTML = '<strong>WHITEBOARD</strong> / SELECT A SESSION';
-        liveIndicator.textContent = 'waiting';
-        return;
-      }
-      currentPath.innerHTML = '<strong>' + esc(session.title || 'UNTITLED') + '</strong> / ' + esc(session.cwd || '');
-      liveIndicator.textContent = session.active ? 'live' : 'inactive';
     }
 
     function persistReadVersions() {
@@ -473,15 +338,15 @@
 
     async function loadSessions() {
       try {
-        const currentInactiveSection = sessionList.querySelector('.inactive-section');
-        if (currentInactiveSection) inactiveOpen = currentInactiveSection.open;
         const response = await fetch('/api/sessions', { cache: 'no-store' });
         if (!response.ok) throw new Error('HTTP ' + response.status);
         sessions = await response.json();
-        sessions.sort(function(a, b) { return versionTime(b) - versionTime(a); });
+        sessions.sort(function(a, b) {
+          return versionTime(b) - versionTime(a) || Number(b.updated_at || 0) - Number(a.updated_at || 0) ||
+            String(a.key).localeCompare(String(b.key));
+        });
         reconcileUnread();
         renderSessions();
-        updateSelectionChrome();
         if (requestedSession && sessions.some(function(s) { return s.key === requestedSession; })) {
           const key = requestedSession;
           requestedSession = null;
@@ -492,44 +357,26 @@
           selectedVersion = null;
           frame.style.display = 'none';
           welcome.style.display = 'grid';
-          updateSelectionChrome();
         }
-      } catch (error) {
-        liveIndicator.textContent = 'offline';
-      }
+      } catch (_) {}
     }
 
     async function select(key) {
       selected = key;
       const session = sessions.find(function(s) { return s.key === key; });
-      if (session && !session.active) inactiveOpen = true;
       if (session) markRead(session.key, session.version);
       selectedVersion = null;
       history.replaceState(null, '', '/?session=' + encodeURIComponent(key));
+      await fetch('/api/viewer/select', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: key})
+      }).catch(function() {});
       frame.src = '/session/' + encodeURIComponent(key) + '?t=' + Date.now();
       frame.style.display = 'block';
       welcome.style.display = 'none';
       renderSessions();
-      updateSelectionChrome();
       await checkVersion(true);
-    }
-
-    async function deactivate(key) {
-      const session = sessions.find(function(item) { return item.key === key; });
-      if (!session || !session.active) return;
-      try {
-        const response = await fetch('/api/sessions/close', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({provider: session.provider, session_id: session.session_id, cwd: session.cwd})
-        });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        await loadSessions();
-        inactiveOpen = true;
-        renderSessions();
-      } catch (_) {
-        liveIndicator.textContent = 'could not deactivate';
-      }
     }
 
     async function checkVersion(force) {
@@ -551,7 +398,6 @@
           const response = await fetch('/api/events', { cache: 'no-store' });
           if (!response.ok) throw new Error('HTTP ' + response.status);
           eventsConnected = true;
-          if (!selected) liveIndicator.textContent = 'watching';
           const event = await response.json();
           if (event.type === 'artifact_updated' && event.key) {
             if (event.key === selected) {
@@ -564,7 +410,6 @@
           await loadSessions();
         } catch (_) {
           eventsConnected = false;
-          liveIndicator.textContent = selected ? liveIndicator.textContent : 'offline';
           await new Promise(function(resolve) { setTimeout(resolve, 1500); });
         }
       }

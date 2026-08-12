@@ -47,10 +47,13 @@ panels, gradients, or decorative card borders.
 
 - The viewer is a 272px navigation rail plus a fluid whiteboard pane. The rail
   serves the board; it must not become a second competing canvas.
-- Keep the viewer chrome at roughly 48px high and use 8px internal controls.
-- Keep session rows compact at roughly 40–42px with 4–8px vertical group
-  rhythm. Do not add decorative status bullets to every row; the left marker is
-  reserved for meaningful unread state, with row actions kept on the right.
+- Keep the right pane free of persistent header chrome; the whiteboard starts at
+  the top edge and owns its own title. Use 8px internal controls where needed.
+- Keep the three-line session rows compact at roughly 56–60px with 4–8px
+  vertical rhythm. Do not add decorative status bullets to every row; the left
+  marker is reserved for meaningful unread state.
+- Navigation is one chronological list; active/inactive lifecycle state is not
+  a second grouping axis. File updates reorder the list immediately.
 - The whiteboard has one broad explanation field and no equal grid of generic
   cards. Use a narrow annotation margin when it helps; group related anchors
   tightly, then use a deliberate larger gap between topics. Keep the normal
