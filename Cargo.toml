@@ -1,5 +1,5 @@
 [package]
-name = "session-artifacts"
+name = "session-whiteboard"
 version = "0.1.0"
 edition = "2024"
 description = "A daemon and browser viewer for live per-session HTML artifacts"

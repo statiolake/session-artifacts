@@ -14,7 +14,16 @@ use crate::template;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
+const ARTIFACT_ROOT: &str = ".session-whiteboard";
+const LEGACY_ARTIFACT_ROOT: &str = ".session-artifacts";
+
 pub fn app_data_dir() -> PathBuf {
+    ProjectDirs::from("", "", "session-whiteboard")
+        .map(|dirs| dirs.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| std::env::temp_dir().join("session-whiteboard"))
+}
+
+fn legacy_app_data_dir() -> PathBuf {
     ProjectDirs::from("", "", "session-artifacts")
         .map(|dirs| dirs.data_local_dir().to_path_buf())
         .unwrap_or_else(|| std::env::temp_dir().join("session-artifacts"))
@@ -30,6 +39,16 @@ pub fn registry_path() -> PathBuf {
 
 pub fn load_registry() -> Result<Registry> {
     let path = registry_path();
+    let path = if path.exists() {
+        path
+    } else {
+        let legacy_path = legacy_app_data_dir().join("registry.json");
+        if legacy_path.exists() {
+            legacy_path
+        } else {
+            return Ok(Registry::default());
+        }
+    };
     if !path.exists() {
         return Ok(Registry::default());
     }
@@ -62,9 +81,31 @@ pub fn session_key(provider: &Provider, session_id: &str, cwd: &Path) -> String 
 }
 
 pub fn artifact_relative_path(provider: &Provider, key: &str) -> PathBuf {
-    PathBuf::from(".session-artifacts")
+    PathBuf::from(ARTIFACT_ROOT)
         .join(provider.as_str())
         .join(format!("{key}.html"))
+}
+
+fn legacy_artifact_relative_path(provider: &Provider, key: &str) -> PathBuf {
+    PathBuf::from(LEGACY_ARTIFACT_ROOT)
+        .join(provider.as_str())
+        .join(format!("{key}.html"))
+}
+
+fn migrate_legacy_artifact_path(cwd: &Path, relative_path: &Path) -> Result<PathBuf> {
+    let Some(suffix) = relative_path.strip_prefix(LEGACY_ARTIFACT_ROOT).ok() else {
+        return Ok(relative_path.to_path_buf());
+    };
+    let new_relative_path = PathBuf::from(ARTIFACT_ROOT).join(suffix);
+    let old_absolute_path = cwd.join(relative_path);
+    let new_absolute_path = cwd.join(&new_relative_path);
+    if old_absolute_path.exists() && !new_absolute_path.exists() {
+        if let Some(parent) = new_absolute_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(old_absolute_path, &new_absolute_path)?;
+    }
+    Ok(new_relative_path)
 }
 
 pub fn prepare_artifact(
@@ -87,11 +128,20 @@ pub fn prepare_artifact(
             && record.session_id == request.session_id
             && record.cwd == request.cwd
     }) {
+        record.artifact_path = migrate_legacy_artifact_path(&request.cwd, &record.artifact_path)?;
         record.active = true;
         record.updated_at = timestamp;
         record.clone()
     } else {
         let relative_path = artifact_relative_path(&request.provider, &key);
+        let relative_path = if request.cwd.join(&relative_path).exists() {
+            relative_path
+        } else {
+            migrate_legacy_artifact_path(
+                &request.cwd,
+                &legacy_artifact_relative_path(&request.provider, &key),
+            )?
+        };
         let absolute_path = request.cwd.join(&relative_path);
         if !absolute_path.exists() {
             if let Some(parent) = absolute_path.parent() {
@@ -267,26 +317,42 @@ fn ensure_git_exclude(cwd: &Path) -> std::result::Result<(), String> {
         root.join(git_dir)
     };
     let exclude_path = git_dir.join("info").join("exclude");
-    let artifact_root = cwd.join(".session-artifacts");
+    let artifact_root = cwd.join(ARTIFACT_ROOT);
     let relative = artifact_root
         .strip_prefix(&root)
         .map_err(|error| format!("could not make artifact path relative to Git root: {error}"))?;
     let pattern = format!("/{}/", path_to_slashes(relative));
+    let legacy_artifact_root = cwd.join(LEGACY_ARTIFACT_ROOT);
+    let legacy_relative = legacy_artifact_root.strip_prefix(&root).map_err(|error| {
+        format!("could not make legacy artifact path relative to Git root: {error}")
+    })?;
+    let legacy_pattern = format!("/{}/", path_to_slashes(legacy_relative));
 
-    let mut content = if exclude_path.exists() {
+    let original_content = if exclude_path.exists() {
         fs::read_to_string(&exclude_path)
             .map_err(|error| format!("could not read {}: {error}", exclude_path.display()))?
     } else {
         String::new()
     };
-    if content.lines().any(|line| line.trim() == pattern) {
+    let has_pattern = original_content.lines().any(|line| line.trim() == pattern);
+    let had_legacy_pattern = original_content
+        .lines()
+        .any(|line| line.trim() == legacy_pattern);
+    if has_pattern && !had_legacy_pattern {
         return Ok(());
     }
+    let mut content = original_content
+        .lines()
+        .filter(|line| line.trim() != legacy_pattern)
+        .collect::<Vec<_>>()
+        .join("\n");
     if !content.is_empty() && !content.ends_with('\n') {
         content.push('\n');
     }
-    content.push_str(&pattern);
-    content.push('\n');
+    if !has_pattern {
+        content.push_str(&pattern);
+        content.push('\n');
+    }
 
     if let Some(parent) = exclude_path.parent() {
         fs::create_dir_all(parent)
@@ -317,7 +383,7 @@ mod tests {
     #[test]
     fn title_reader_ignores_comments_before_title() {
         let path = std::env::temp_dir().join(format!(
-            "session-artifacts-title-test-{}-{}.html",
+            "session-whiteboard-title-test-{}-{}.html",
             std::process::id(),
             now()
         ));
@@ -335,17 +401,53 @@ mod tests {
         let path = artifact_relative_path(&Provider::Codex, "codex-demo-1234");
         assert_eq!(
             path,
-            PathBuf::from(".session-artifacts/codex/codex-demo-1234.html")
+            PathBuf::from(".session-whiteboard/codex/codex-demo-1234.html")
         );
+    }
+
+    #[test]
+    fn opening_a_legacy_artifact_moves_it_to_the_whiteboard_root() {
+        let cwd = std::env::temp_dir().join(format!(
+            "session-whiteboard-migration-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&cwd);
+        let request = OpenRequest {
+            provider: Provider::Codex,
+            session_id: "legacy-session".to_string(),
+            cwd: cwd.clone(),
+        };
+        let key = session_key(&request.provider, &request.session_id, &request.cwd);
+        let legacy_path = legacy_artifact_relative_path(&request.provider, &key);
+        let legacy_absolute_path = cwd.join(&legacy_path);
+        fs::create_dir_all(legacy_absolute_path.parent().expect("legacy parent"))
+            .expect("create legacy artifact parent");
+        fs::write(&legacy_absolute_path, "legacy whiteboard").expect("write legacy whiteboard");
+
+        let mut registry = Registry::default();
+        let (record, warning) =
+            prepare_artifact(&mut registry, &request).expect("migrate artifact");
+        assert!(warning.is_none());
+        assert_eq!(
+            record.artifact_path,
+            artifact_relative_path(&request.provider, &key)
+        );
+        assert_eq!(
+            fs::read_to_string(cwd.join(&record.artifact_path)).expect("read migrated whiteboard"),
+            "legacy whiteboard"
+        );
+        assert!(!legacy_absolute_path.exists());
+
+        let _ = fs::remove_dir_all(cwd);
     }
 
     #[test]
     fn delete_removes_the_explicit_artifact_and_registry_record() {
         let cwd = std::env::temp_dir().join(format!(
-            "session-artifacts-delete-test-{}",
+            "session-whiteboard-delete-test-{}",
             std::process::id()
         ));
-        let artifact_path = PathBuf::from(".session-artifacts/codex/delete-test.html");
+        let artifact_path = PathBuf::from(".session-whiteboard/codex/delete-test.html");
         let absolute_path = cwd.join(&artifact_path);
         fs::create_dir_all(absolute_path.parent().expect("artifact parent"))
             .expect("create artifact parent");

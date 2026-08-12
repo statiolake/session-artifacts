@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Session Artifacts</title>
+  <title>Session Whiteboard</title>
   <style>
     :root { color-scheme: light dark; --bg:#eef2f5; --sidebar:#18212a; --sidebar-text:#e9eff4; --sidebar-muted:#9ba9b5; --line:rgba(255,255,255,.12); --accent:#73b7e8; --content:#f7f9fa; --text:#1a242d; }
     @media (prefers-color-scheme:dark) { :root { --bg:#101418; --sidebar:#151b20; --content:#101418; --text:#edf2f6; } }
@@ -39,7 +39,7 @@
     <aside class="sidebar">
       <header class="brand">
         <small>Live workspace</small>
-        <h1>Session Artifacts</h1>
+        <h1>Session Whiteboard</h1>
       </header>
       <nav id="sessions" class="sessions" aria-label="Active sessions"></nav>
       <footer class="footer"><span id="status">connecting…</span><button id="refresh" type="button">Refresh</button></footer>
@@ -48,10 +48,10 @@
       <section id="welcome" class="welcome">
         <div class="welcome-inner">
           <h2>Nothing is active yet</h2>
-          <p>When an agent opens a session artifact, it will appear here. Select a session from the sidebar to follow its live HTML view.</p>
+          <p>When an agent opens a session whiteboard, it will appear here. Select a session from the navigation to follow its live view.</p>
         </div>
       </section>
-      <iframe id="artifact" title="Session artifact"></iframe>
+      <iframe id="artifact" title="Session whiteboard"></iframe>
     </main>
   </div>
   <script>
@@ -62,6 +62,7 @@
     let sessions = [];
     let selected = null;
     let selectedVersion = null;
+    let requestedSession = new URLSearchParams(window.location.search).get('session');
 
     function esc(value) {
       return String(value).replace(/[&<>'"]/g, function(c) {
@@ -73,7 +74,7 @@
 
     function renderSessions() {
       if (!sessions.length) {
-        sessionList.innerHTML = '<div class="empty-side">No active session artifacts.</div>';
+        sessionList.innerHTML = '<div class="empty-side">No active session whiteboards.</div>';
         return;
       }
       const groups = new Map();
@@ -107,6 +108,11 @@
         sessions = await response.json();
         status.textContent = sessions.length + ' active';
         renderSessions();
+        if (requestedSession && sessions.some(function(s) { return s.key === requestedSession; })) {
+          const key = requestedSession;
+          requestedSession = null;
+          await select(key);
+        }
         if (selected && !sessions.some(function(s) { return s.key === selected; })) {
           selected = null;
           selectedVersion = null;
@@ -121,6 +127,7 @@
     async function select(key) {
       selected = key;
       selectedVersion = null;
+      history.replaceState(null, '', '/?session=' + encodeURIComponent(key));
       frame.src = '/session/' + encodeURIComponent(key) + '?t=' + Date.now();
       frame.style.display = 'block';
       welcome.style.display = 'none';

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -19,6 +20,7 @@ pub struct Daemon;
 
 struct AppState {
     registry: Registry,
+    browser_opened: HashSet<String>,
 }
 
 impl Daemon {
@@ -28,6 +30,7 @@ impl Daemon {
         let server = Server::from_listener(listener, None)?;
         let state = Arc::new(Mutex::new(AppState {
             registry: storage::load_registry()?,
+            browser_opened: HashSet::new(),
         }));
 
         fs::create_dir_all(storage::app_data_dir())?;
@@ -45,7 +48,7 @@ impl Daemon {
             let state = Arc::clone(&state);
             thread::spawn(move || {
                 if let Err(error) = handle_request(request, state, actual_port) {
-                    eprintln!("session-artifacts daemon: {error}");
+                    eprintln!("session-whiteboard daemon: {error}");
                 }
             });
         }
@@ -110,12 +113,17 @@ fn handle_request(mut request: Request, state: Arc<Mutex<AppState>>, port: u16) 
             storage::save_registry(&state.registry)?;
             let title = storage::read_title(&record.cwd.join(&record.artifact_path))
                 .unwrap_or_else(|_| "Untitled session".to_string());
+            let should_open_browser = state.browser_opened.insert(record.key.clone());
+            let viewer_url = viewer_url(port, &record.key);
+            if should_open_browser {
+                open_browser(&viewer_url);
+            }
             let response = OpenResponse {
                 provider: record.provider,
                 session_id: record.session_id,
                 artifact_path: record.artifact_path,
                 relative_to: record.cwd.clone(),
-                viewer_url: format!("http://127.0.0.1:{port}/session/{}", record.key),
+                viewer_url,
                 title,
                 warning,
             };
@@ -213,6 +221,27 @@ fn respond_error(request: Request, status: u16, message: &str) -> Result<()> {
     Ok(())
 }
 
+fn viewer_url(port: u16, key: &str) -> String {
+    format!("http://127.0.0.1:{port}/?session={key}")
+}
+
+fn open_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "linux")]
+    let result = Command::new("xdg-open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let result = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let result: std::io::Result<std::process::Child> = Err(std::io::Error::other(
+        "automatic browser opening is unsupported",
+    ));
+
+    if let Err(error) = result {
+        eprintln!("session-whiteboard: could not open browser: {error}");
+    }
+}
+
 fn client_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<u8>> {
     let port = ensure_daemon()?;
     let mut stream = TcpStream::connect(("127.0.0.1", port))?;
@@ -295,4 +324,17 @@ fn is_healthy(port: u16) -> bool {
     }
     let mut response = String::new();
     stream.read_to_string(&mut response).is_ok() && response.contains("200 OK")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn viewer_url_points_to_navigation_shell_and_selects_session() {
+        assert_eq!(
+            viewer_url(43123, "codex-abc123"),
+            "http://127.0.0.1:43123/?session=codex-abc123"
+        );
+    }
 }

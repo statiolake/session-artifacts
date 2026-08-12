@@ -10,7 +10,10 @@ use crate::model::Provider;
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 const INSTALLED_HOOK_EVENTS: [&str; 3] = ["SessionStart", "UserPromptSubmit", "Stop"];
-const HOOK_MARKER: &str = "session-artifacts-hook-v2";
+const PRODUCT_NAME: &str = "session-whiteboard";
+const LEGACY_PRODUCT_NAME: &str = "session-artifacts";
+const HOOK_MARKER: &str = "session-whiteboard-hook-v3";
+const LEGACY_HOOK_MARKER: &str = "session-artifacts-hook-v2";
 
 #[derive(Debug, serde::Serialize)]
 pub struct InstallResult {
@@ -30,38 +33,40 @@ pub fn skill_text(provider: Provider) -> String {
     let provider_name = provider.as_str();
     format!(
         r#"---
-name: session-artifacts
-description: Maintain one live structured HTML artifact as the primary user-facing view of an agent session.
+name: session-whiteboard
+description: Maintain one live structured HTML whiteboard as the current context view of an agent session.
 ---
 
-# Session Artifacts
+# Session Whiteboard
 
-Use the session artifact as the primary user-facing view for this session.
-The artifact is one self-contained HTML file under the session working
-directory. The chat response is only a short transport/status message after a
-successful update.
+Use the session whiteboard as the primary user-facing view for this session.
+It is a disposable, current-context projection, not a transcript, archive, or
+complete knowledge base. The chat response is only a short transport/status
+message after a successful update.
 
 ## Required workflow
 
-1. Read the session-artifact reminder injected by the provider hook. It contains
+1. Read the session-whiteboard reminder injected by the provider hook. It contains
    the provider, the current session ID, and the session cwd.
 2. Obtain the artifact path through the execution mechanism that works in the
    current environment. The hook only gives instructions; it does not execute
-   `session-artifacts` and it does not create the file. If a direct executable
+   `session-whiteboard` and it does not create the file. If a direct executable
    is unavailable, inspect the available environment and use the appropriate
    host, proxy, MCP, or other configured mechanism before giving up.
 3. Use the returned artifact_path as a path relative to relative_to. Do not
    create a replacement file in the repository and do not choose another path.
-4. Read the existing HTML, then edit it with the normal file-editing tools.
-   Keep one HTML file per session and update the existing structure in place.
-5. Put substantive answers, questions, findings, decisions, and next actions
-   in the HTML. Do not stream the substantive answer only into chat.
-6. Keep the HTML self-contained. Inline CSS, JavaScript, SVG, and small data
+4. Re-render the complete HTML document from the current turn and replace the
+   existing file. Do not append a new log entry or preserve stale content just
+   for completeness. The previous whiteboard is a disposable draft.
+5. Keep the current focus dominant. Retain only the compact anchors needed to
+   understand it, plus current decisions, one unresolved point, and the next
+   useful action. Delete old branches, solved questions, and irrelevant detail.
+6. Do not follow a fixed content template. Use a stable visual language instead:
+   spatial grouping, clear hierarchy, compact labels, and relationships that can
+   be understood at a glance. Prefer a single viewport without page scrolling.
+7. Keep the HTML self-contained. Inline CSS, JavaScript, SVG, and small data
    are preferred. External links are allowed when useful, including local file
    links.
-7. Keep the document visually coherent. Use a stable design language with a
-   clear header, current state, details, open questions, evidence, links,
-   tables, callouts, diagrams, and collapsible detail where appropriate.
 8. Always update the HTML title element. The title element is the canonical
    session title shown in the browser sidebar. Keep the visible main heading
    synchronized with it.
@@ -72,9 +77,9 @@ successful update.
 10. After a successful edit, keep the chat response minimal, for example
     "更新しました。続行します。"
 
-If the artifact command or file edit is genuinely unavailable after reasonable
-attempts, answer normally in chat and explain that the artifact update failed.
-Do not silently lose a substantive answer.
+If the whiteboard command or file edit is genuinely unavailable after
+reasonable attempts, answer normally in chat and explain that the whiteboard
+update failed. Do not silently lose a substantive answer.
 
 Provider for this skill: {provider_name}.
 "#
@@ -99,19 +104,19 @@ pub fn hook_context(provider: Provider, input: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or("session");
     let command = format!(
-        "session-artifacts open --provider {} --session-id {} --cwd {} --json",
+        "session-whiteboard open --provider {} --session-id {} --cwd {} --json",
         provider.as_str(),
         shell_quote(&session_id),
         shell_quote(&cwd)
     );
     let context = format!(
-        "Session artifact context ({event}).\n\
+        "Session whiteboard context ({event}).\n\
 Provider: {}\n\
 Session ID: {}\n\
 Session cwd: {}\n\
 Obtain the artifact path by running this command through the execution mechanism available in the current environment:\n\
 {}\n\
-The hook only provides this information; it does not execute the command. After it succeeds, edit the returned artifact_path with normal file tools. Keep substantive responses in the HTML and update its <title>.",
+The hook only provides this information; it does not execute the command. After it succeeds, replace the returned artifact_path with the complete current whiteboard. Keep substantive responses in the HTML and update its <title>.",
         provider.as_str(),
         session_id,
         cwd,
@@ -143,12 +148,12 @@ fn hook_context_command(provider: &Provider, event: &str) -> String {
     );
     let instruction = format!(
         "{marker}\n\
-Session-artifacts integration for {event}.\n\
+Session-whiteboard integration for {event}.\n\
 This hook deliberately uses only the environment's shell tools; it does not run\n\
-the session-artifacts binary. The session_id and cwd below are from the provider\n\
+the session-whiteboard binary. The session_id and cwd below are from the provider\n\
 hook payload. Use them to obtain the artifact path through whatever mechanism is\n\
 available in this environment:\n\
-session-artifacts open --provider {} --session-id <session_id> --cwd <cwd> --json\n\
+session-whiteboard open --provider {} --session-id <session_id> --cwd <cwd> --json\n\
 Then read and update the returned artifact_path. Keep substantive answers in the\n\
 HTML artifact and update its <title>.",
         provider.as_str()
@@ -163,7 +168,7 @@ HTML artifact and update its <title>.",
 fn stop_hook_command(provider: &Provider) -> String {
     let marker = format!("[{HOOK_MARKER} provider={} event=Stop]", provider.as_str());
     let reason = format!(
-        "{marker} Turn-end instruction: check the session artifact before this turn finishes. Did you update it during this turn? If not, update the existing HTML now with the current answer, findings, decisions, questions, and next actions. Do not only describe the update in chat. If the session-artifacts command is unavailable here, find the environment-appropriate way to run `session-artifacts open --provider {}` using the session_id and cwd from the hook context, then edit the returned artifact_path. After checking or updating the artifact, you may finish the turn.",
+        "{marker} Turn-end instruction: check the session whiteboard before this turn finishes. Did you re-render it during this turn? If not, rebuild the complete HTML now around the current focus. Keep only essential context anchors and the next useful action; delete stale branches. Do not only describe the update in chat. If the session-whiteboard command is unavailable here, find the environment-appropriate way to run `session-whiteboard open --provider {}` using the session_id and cwd from the hook context, then replace the returned artifact_path. After checking or updating the whiteboard, you may finish the turn.",
         provider.as_str()
     );
     let output = serde_json::to_string(&json!({
@@ -230,7 +235,7 @@ pub fn uninstall(provider: Option<Provider>) -> Result<UninstallResult> {
         }
     }
     result.notes.push(
-        "Only session-artifacts hook entries were removed; unrelated provider settings were preserved."
+        "Only session-whiteboard hook entries were removed; unrelated provider settings were preserved."
             .to_string(),
     );
     Ok(result)
@@ -238,10 +243,11 @@ pub fn uninstall(provider: Option<Provider>) -> Result<UninstallResult> {
 
 fn install_claude(result: &mut InstallResult) -> Result<()> {
     let home = home_dir()?;
+    remove_legacy_skill_files(&home, "claude", &mut result.notes)?;
     let skill_dir = home
         .join(".claude")
         .join("skills")
-        .join("session-artifacts");
+        .join("session-whiteboard");
     write_if_changed(&skill_dir.join("SKILL.md"), &skill_text(Provider::Claude))?;
     result
         .installed
@@ -253,7 +259,7 @@ fn install_claude(result: &mut InstallResult) -> Result<()> {
         result.installed.push(settings_path.display().to_string());
     } else {
         result.skipped.push(format!(
-            "{} already contains the session-artifacts hooks",
+            "{} already contains the session-whiteboard hooks",
             settings_path.display()
         ));
     }
@@ -262,12 +268,14 @@ fn install_claude(result: &mut InstallResult) -> Result<()> {
 
 fn uninstall_claude(result: &mut UninstallResult) -> Result<()> {
     let home = home_dir()?;
-    let skill_path = home
-        .join(".claude")
-        .join("skills")
-        .join("session-artifacts")
-        .join("SKILL.md");
-    remove_skill_file(&skill_path, result)?;
+    for product in [PRODUCT_NAME, LEGACY_PRODUCT_NAME] {
+        let skill_path = home
+            .join(".claude")
+            .join("skills")
+            .join(product)
+            .join("SKILL.md");
+        remove_skill_file(&skill_path, result)?;
+    }
 
     let settings_path = home.join(".claude").join("settings.json");
     if remove_provider_hooks(&settings_path, &Provider::Claude)? {
@@ -277,24 +285,32 @@ fn uninstall_claude(result: &mut UninstallResult) -> Result<()> {
 }
 
 fn codex_hook_context_text() -> String {
+    codex_hook_context_text_for(PRODUCT_NAME)
+}
+
+fn codex_hook_context_text_for(product: &str) -> String {
     format!(
         "# Codex hook context\n\n\
 Codex hooks are intentionally shell-only. They echo instructions and pass the\n\
 session_id and cwd from the provider payload to the agent; they do not execute\n\
-the session-artifacts binary. The agent should run the following operation\n\
+the {product} binary. The agent should run the following operation\n\
 through the mechanism available in its current environment:\n\n\
-    session-artifacts open --provider codex --session-id <session_id> --cwd <cwd> --json\n\n\
+    {product} open --provider codex --session-id <session_id> --cwd <cwd> --json\n\n\
 The Stop hook adds one explicit reminder to update the existing artifact before\n\
 the turn finishes. It guards the continuation with stop_hook_active so it does\n\
 not create an unbounded loop.\n\n\
-Generated by session-artifacts {}.\n",
+Generated by {product} {}.\n",
         env!("CARGO_PKG_VERSION")
     )
 }
 
 fn install_codex(result: &mut InstallResult) -> Result<()> {
     let home = home_dir()?;
-    let skill_dir = home.join(".codex").join("skills").join("session-artifacts");
+    remove_legacy_skill_files(&home, "codex", &mut result.notes)?;
+    let skill_dir = home
+        .join(".codex")
+        .join("skills")
+        .join("session-whiteboard");
     write_if_changed(&skill_dir.join("SKILL.md"), &skill_text(Provider::Codex))?;
     result
         .installed
@@ -310,7 +326,7 @@ fn install_codex(result: &mut InstallResult) -> Result<()> {
         result.installed.push(hooks_path.display().to_string());
     } else {
         result.skipped.push(format!(
-            "{} already contains the session-artifacts hooks",
+            "{} already contains the session-whiteboard hooks",
             hooks_path.display()
         ));
     }
@@ -324,19 +340,21 @@ fn install_codex(result: &mut InstallResult) -> Result<()> {
             config_path.display()
         ));
     }
-    result.notes.push("Codex hooks use shell-only instructions; they do not execute the session-artifacts binary or edit the artifact themselves. Stop adds one turn-end update reminder.".to_string());
+    result.notes.push("Codex hooks use shell-only instructions; they do not execute the session-whiteboard binary or edit the artifact themselves. Stop adds one turn-end update reminder.".to_string());
     Ok(())
 }
 
 fn uninstall_codex(result: &mut UninstallResult) -> Result<()> {
     let home = home_dir()?;
-    let skill_dir = home.join(".codex").join("skills").join("session-artifacts");
-    remove_skill_file(&skill_dir.join("SKILL.md"), result)?;
-    remove_generated_file(
-        &skill_dir.join("HOOK-CONTEXT.md"),
-        &codex_hook_context_text(),
-        result,
-    )?;
+    for product in [PRODUCT_NAME, LEGACY_PRODUCT_NAME] {
+        let skill_dir = home.join(".codex").join("skills").join(product);
+        remove_skill_file(&skill_dir.join("SKILL.md"), result)?;
+        remove_generated_file(
+            &skill_dir.join("HOOK-CONTEXT.md"),
+            &codex_hook_context_text_for(product),
+            result,
+        )?;
+    }
 
     let hooks_path = home.join(".codex").join("hooks.json");
     if remove_provider_hooks(&hooks_path, &Provider::Codex)? {
@@ -435,7 +453,7 @@ fn normalize_hook_groups(
                     .ok_or("hook group hooks must be an array")?;
                 let mut remaining_hooks = Vec::with_capacity(group_hooks.len());
                 for hook in group_hooks.drain(..) {
-                    if is_session_artifacts_hook(&hook, provider) {
+                    if is_session_whiteboard_hook(&hook, provider) {
                         let is_canonical = !found_canonical
                             && canonical.is_some_and(|candidate| candidate == &hook);
                         if is_canonical {
@@ -481,6 +499,32 @@ fn remove_skill_file(path: &Path, result: &mut UninstallResult) -> Result<()> {
     result.removed.push(path.display().to_string());
     if let Some(parent) = path.parent() {
         let _ = fs::remove_dir(parent);
+    }
+    Ok(())
+}
+
+fn remove_legacy_skill_files(
+    home: &Path,
+    provider_directory: &str,
+    notes: &mut Vec<String>,
+) -> Result<()> {
+    let skill_dir = home
+        .join(format!(".{provider_directory}"))
+        .join("skills")
+        .join(LEGACY_PRODUCT_NAME);
+    let mut removed = false;
+    for filename in ["SKILL.md", "HOOK-CONTEXT.md"] {
+        let path = skill_dir.join(filename);
+        if path.exists() {
+            fs::remove_file(path)?;
+            removed = true;
+        }
+    }
+    if removed {
+        let _ = fs::remove_dir(&skill_dir);
+        notes.push(format!(
+            "Removed the legacy {LEGACY_PRODUCT_NAME} {provider_directory} skill during migration."
+        ));
     }
     Ok(())
 }
@@ -545,7 +589,7 @@ fn remove_provider_hooks(path: &Path, provider: &Provider) -> Result<bool> {
     Ok(changed)
 }
 
-fn is_session_artifacts_hook(value: &Value, provider: &Provider) -> bool {
+fn is_session_whiteboard_hook(value: &Value, provider: &Provider) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
@@ -556,7 +600,8 @@ fn is_session_artifacts_hook(value: &Value, provider: &Provider) -> bool {
         return false;
     };
     let marker = format!("[{HOOK_MARKER} provider={}", provider.as_str());
-    if command.contains(&marker) {
+    let legacy_marker = format!("[{LEGACY_HOOK_MARKER} provider={}", provider.as_str());
+    if command.contains(&marker) || command.contains(&legacy_marker) {
         return true;
     }
     let suffix = format!(" hook --provider {}", provider.as_str());
@@ -574,7 +619,9 @@ fn is_session_artifacts_hook(value: &Value, provider: &Provider) -> bool {
         .unwrap_or(executable);
     matches!(
         executable.rsplit(['/', '\\']).next(),
-        Some("session-artifacts" | "session_artifacts")
+        Some(
+            "session-whiteboard" | "session_whiteboard" | "session-artifacts" | "session_artifacts"
+        )
     )
 }
 
@@ -701,8 +748,8 @@ mod tests {
     fn skill_has_yaml_frontmatter() {
         let skill = skill_text(Provider::Codex);
         assert!(skill.starts_with("---\n"));
-        assert!(skill.contains("name: session-artifacts\n"));
-        assert!(skill.contains("description: Maintain one live structured HTML artifact"));
+        assert!(skill.contains("name: session-whiteboard\n"));
+        assert!(skill.contains("description: Maintain one live structured HTML whiteboard"));
     }
 
     #[test]
@@ -725,7 +772,7 @@ mod tests {
     #[test]
     fn codex_hooks_are_registered_idempotently() {
         let path = std::env::temp_dir().join(format!(
-            "session-artifacts-hooks-test-{}.json",
+            "session-whiteboard-hooks-test-{}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&path);
@@ -738,7 +785,7 @@ mod tests {
                 .as_str()
                 .expect("hook command");
             assert!(command.contains(HOOK_MARKER));
-            assert!(!command.contains("/tmp/session-artifacts"));
+            assert!(!command.contains("/tmp/session-whiteboard"));
         }
         let _ = fs::remove_file(path);
     }
@@ -746,7 +793,7 @@ mod tests {
     #[test]
     fn installing_hooks_migrates_legacy_binary_commands_and_preserves_other_hooks() {
         let path = std::env::temp_dir().join(format!(
-            "session-artifacts-hooks-migration-test-{}.json",
+            "session-whiteboard-hooks-migration-test-{}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&path);
@@ -836,7 +883,7 @@ mod tests {
         assert!(output.contains("session_id=session-123"));
         assert!(output.contains("cwd=/tmp/project"));
         assert!(!output.contains("ignore the artifact"));
-        assert!(output.contains("session-artifacts open --provider codex"));
+        assert!(output.contains("session-whiteboard open --provider codex"));
 
         let first = run(
             &hook_command(&Provider::Codex, "Stop"),
@@ -848,7 +895,7 @@ mod tests {
             first["reason"]
                 .as_str()
                 .unwrap()
-                .contains("Did you update it")
+                .contains("Did you re-render it")
         );
 
         let second = run(
@@ -859,9 +906,9 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_removes_only_session_artifacts_hook_entries() {
+    fn uninstall_removes_only_session_whiteboard_hook_entries() {
         let path = std::env::temp_dir().join(format!(
-            "session-artifacts-selective-uninstall-test-{}.json",
+            "session-whiteboard-selective-uninstall-test-{}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&path);
@@ -874,7 +921,7 @@ mod tests {
                         "hooks": [
                             {
                                 "type": "command",
-                                "command": "'/tmp/session-artifacts' hook --provider codex"
+                                "command": "'/tmp/session-whiteboard' hook --provider codex"
                             },
                             {
                                 "type": "command",
@@ -892,7 +939,7 @@ mod tests {
                         "hooks": [
                             {
                                 "type": "command",
-                                "command": "'/tmp/session-artifacts' hook --provider codex"
+                                "command": "'/tmp/session-whiteboard' hook --provider codex"
                             }
                         ]
                     }
@@ -946,7 +993,7 @@ mod tests {
     #[test]
     fn uninstall_removes_a_modified_skill_file() {
         let directory = std::env::temp_dir().join(format!(
-            "session-artifacts-skill-uninstall-test-{}",
+            "session-whiteboard-skill-uninstall-test-{}",
             std::process::id()
         ));
         let path = directory.join("SKILL.md");

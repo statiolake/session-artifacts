@@ -14,9 +14,9 @@ use crate::model::{OpenRequest, Provider};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "session-artifacts",
+    name = "session-whiteboard",
     version,
-    about = "Live HTML artifacts for coding-agent sessions"
+    about = "Live HTML whiteboards for coding-agent sessions"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -65,7 +65,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Print the agent instructions for using session artifacts.
+    /// Print the agent instructions for using session whiteboards.
     Skill {
         #[arg(long, value_enum, default_value_t = ProviderArg::Generic)]
         provider: ProviderArg,
@@ -108,7 +108,7 @@ impl From<ProviderArg> for Provider {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("session-artifacts: {error}");
+        eprintln!("session-whiteboard: {error}");
         std::process::exit(1);
     }
 }
