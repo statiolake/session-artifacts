@@ -33,20 +33,26 @@ pub fn skill_text(provider: Provider) -> String {
     format!(
         r#"---
 name: session-whiteboard
-description: Use one live HTML whiteboard only when the user explicitly asks for a whiteboard explanation or summary, such as "ホワイトボードで説明して" or "ちょっとそこホワイトボードにまとめて".
+description: Use one live HTML whiteboard when the user explicitly asks for a whiteboard explanation or when a compact two-dimensional explanation would materially improve clarity. It may be used often, but it is not required on every turn.
 ---
 
 # Session Whiteboard
 
-This is an opt-in companion to the conversation. Use it only when the user
-explicitly asks for a whiteboard, for example "ホワイトボードで説明して" or
-"ちょっとそこホワイトボードにまとめて". Do not update it for ordinary
-questions, follow-up discussion, coding work, or every turn. Keep the normal
-answer in chat; the whiteboard adds a spatial explanation when it is useful.
+This is an opt-in companion to the conversation. Use it when the user explicitly
+asks for a whiteboard, for example "ホワイトボードで説明して" or
+"ちょっとそこホワイトボードにまとめて", and also when you judge that a
+compact two-dimensional explanation would materially improve understanding. It
+is fine to use it frequently, including on consecutive turns, but do not treat
+it as a required per-turn log or update it merely because a turn ended. Keep
+the normal answer in chat; the whiteboard adds a spatial explanation when it is
+useful.
 
-After one requested update, leave the board alone until the user asks for
-another whiteboard update. It is a disposable current-context projection, not a
-transcript, archive, or complete knowledge base.
+Prefer the board when the explanation has several entities, branches,
+dependencies, comparisons, timelines, layers, or constraints whose
+relationships are easier to see spatially. Keep simple questions, short code
+edits, and linear answers in chat. When the benefit is marginal, stay in chat.
+The board is a disposable current-context projection, not a transcript, archive,
+or complete knowledge base.
 
 The board is for an engineer explaining a technical subject to another
 engineer. Text is not the goal by itself: use position, grouping, connectors,
@@ -54,7 +60,7 @@ alignment, and short labels to make relationships visible in two dimensions.
 Keep the page practical and information-dense. Do not make a slogan, manifesto,
 or oversized hero heading out of the subject.
 
-## When explicitly requested
+## When the board is useful
 
 1. Obtain the current provider, session ID, and cwd from the agent context. Do
    not invent a session ID. If the session ID is unavailable, ask for it rather
@@ -68,9 +74,9 @@ or oversized hero heading out of the subject.
    or other configured mechanism.
 3. Use the returned artifact_path as a path relative to relative_to. Do not
    create a replacement file in the repository and do not choose another path.
-4. Re-render the complete HTML document from the requested explanation and replace the
-   existing file. Do not append a new log entry or preserve stale content just
-   for completeness. The previous whiteboard is a disposable draft.
+4. Re-render the complete HTML document from the current explanation and replace
+   the existing file. Do not append a new log entry or preserve stale content
+   just for completeness. The previous whiteboard is a disposable draft.
 5. Give the page a concise title that names the subject being explained. The
    <title> names this board in the browser document, so do not use a sentence or
    a generic slogan.
@@ -452,11 +458,14 @@ mod tests {
         let skill = skill_text(Provider::Codex);
         assert!(skill.starts_with("---\n"));
         assert!(skill.contains("name: session-whiteboard\n"));
-        assert!(skill.contains(
-            "description: Use one live HTML whiteboard only when the user explicitly asks"
-        ));
+        assert!(
+            skill.contains(
+                "description: Use one live HTML whiteboard when the user explicitly asks"
+            )
+        );
         assert!(skill.contains("ホワイトボードで説明して"));
-        assert!(skill.contains("Do not update it for ordinary"));
+        assert!(skill.contains("is fine to use it frequently"));
+        assert!(skill.contains("a required per-turn log"));
     }
 
     #[test]

@@ -1,9 +1,9 @@
 # session-whiteboard
 
 Coding-agent sessions can have one live, structured HTML whiteboard. The agent
-re-renders it with its ordinary file tools when the user explicitly asks for a
-whiteboard explanation; a local daemon serves one board per URL and reloads the
-view as the file changes.
+re-renders it with its ordinary file tools when the user asks for a whiteboard
+or when a spatial explanation is clearly more useful; a local daemon serves one
+board per URL and reloads the view as the file changes.
 
 The whiteboard is deliberately not a transcript or archive. It is a compact
 two-dimensional explanation for the engineer reading it: grouping, position,
@@ -23,7 +23,9 @@ It does not install automatic hooks. If an older installation left
 session-whiteboard hooks behind, reinstalling removes only those matching hook
 entries and preserves unrelated provider settings. The skill is opt-in: it is
 used for requests such as `ホワイトボードで説明して` or
-`ちょっとそこホワイトボードにまとめて`, not for every turn.
+`ちょっとそこホワイトボードにまとめて`, and may also be used when the
+agent judges that spatial structure materially improves the explanation. It is
+not required on every turn.
 
 Install one provider explicitly when needed:
 
@@ -51,7 +53,8 @@ portable relative `path:line`, rather than an editor-specific URL.
 
 ## Session workflow
 
-When the user explicitly requests a whiteboard, the agent runs:
+When the user requests a whiteboard, or when spatial structure materially
+improves the explanation, the agent runs:
 
     session-whiteboard prepare \
       --provider codex \
