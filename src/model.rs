@@ -46,11 +46,6 @@ pub struct BrowseResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ViewerSelectRequest {
-    pub key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanResponse {
     pub provider: Provider,
     pub session_id: String,
@@ -73,18 +68,6 @@ pub struct SessionRecord {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Registry {
     pub sessions: Vec<SessionRecord>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionSummary {
-    pub key: String,
-    pub provider: Provider,
-    pub session_id: String,
-    pub cwd: PathBuf,
-    pub artifact_path: PathBuf,
-    pub title: String,
-    pub updated_at: u64,
-    pub version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

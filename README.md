@@ -1,14 +1,15 @@
 # session-whiteboard
 
-Coding-agent sessions have one live, structured HTML whiteboard each. The agent
-re-renders that whiteboard with its ordinary file tools; a local daemon serves
-it to a browser and reloads the view as the file changes.
+Coding-agent sessions can have one live, structured HTML whiteboard. The agent
+re-renders it with its ordinary file tools when the user explicitly asks for a
+whiteboard explanation; a local daemon serves one board per URL and reloads the
+view as the file changes.
 
 The whiteboard is deliberately not a transcript or archive. It is a compact
 two-dimensional explanation for the engineer reading it: grouping, position,
 and relationships carry meaning that a linear chat stream loses. Keep only the
 necessary entities, evidence, decisions, and next action visible. Its `<title>`
-is also the canonical title shown in the browser sidebar.
+names the board in the browser document.
 
 ## Install
 
@@ -17,22 +18,12 @@ Rust is the only build dependency:
     cargo install --path .
     session-whiteboard install
 
-`install` is a global, one-time provider integration. It installs the skill and
-shell-only hook instructions for Claude Code and Codex. The hooks use ubiquitous
-shell tools, pass the provider's session ID and cwd to the agent, and emit
-Codex's required structured JSON for context events,
-and tell the agent how to obtain the whiteboard path. Context hooks never invoke
-the `session-whiteboard` binary directly, so an agent running inside a container
-can choose the host, proxy, MCP, or other execution mechanism available there.
-
-The hooks are registered for `SessionStart`, `UserPromptSubmit`, and `Stop`.
-They only inject session metadata and instructions; they do not execute the
-binary or edit the board. The `Stop` hook adds one explicit turn-end reminder
-to replace the existing HTML with the current board. There is no `SessionEnd`
-cleanup hook: cleanup is explicit because that lifecycle event cannot ask the
-agent to rewrite the board. Reinstalling migrates old `session-artifacts`
-hooks and skill files, including removing the old `SessionEnd` entry, to the
-new name.
+`install` is a global, one-time skill installation for Claude Code and Codex.
+It does not install automatic hooks. If an older installation left
+session-whiteboard hooks behind, reinstalling removes only those matching hook
+entries and preserves unrelated provider settings. The skill is opt-in: it is
+used for requests such as `ホワイトボードで説明して` or
+`ちょっとそこホワイトボードにまとめて`, not for every turn.
 
 Install one provider explicitly when needed:
 
@@ -43,9 +34,9 @@ Remove the global integrations when they are no longer wanted:
 
     session-whiteboard uninstall
 
-Uninstall removes the session-whiteboard skill files and only the matching
-session-whiteboard hook entries. It preserves unrelated provider settings. The
-Codex hook feature flags are retained so other Codex hooks are not disabled.
+Uninstall removes the session-whiteboard skill files and only matching old
+session-whiteboard hook entries. It preserves unrelated provider settings and
+does not change Codex hook feature flags.
 
 ## Design language
 
@@ -60,7 +51,7 @@ portable relative `path:line`, rather than an editor-specific URL.
 
 ## Session workflow
 
-The agent runs this command when a session starts or when the whiteboard is needed:
+When the user explicitly requests a whiteboard, the agent runs:
 
     session-whiteboard prepare \
       --provider codex \
@@ -69,11 +60,9 @@ The agent runs this command when a session starts or when the whiteboard is need
       --json
 
 The JSON response contains `artifact_path`, relative to `relative_to`, and a
-session-specific `viewer_url`. `prepare` opens the navigation shell only when
-the viewer has not been seen recently or its keep-alive connection is gone. It
-never changes the browser's current whiteboard selection. Active sessions are
-on the left and the selected whiteboard is on the right. The daemon creates the
-file at:
+session-specific `viewer_url`. The URL displays only that whiteboard full-screen.
+`prepare` opens that URL only when no viewer connection has been seen recently
+or its keep-alive connection is gone. The daemon creates the file at:
 
     <session-cwd>/.session-whiteboard/<provider>/<session-key>.html
 
@@ -82,21 +71,19 @@ If the cwd is inside a Git repository, the first `prepare` adds the exact
 Failure to update the exclude file is reported as a warning and does not block
 artifact creation.
 
-To open only the navigation viewer, without registering or selecting a session:
+To open the daemon's empty landing page without registering a session:
 
     session-whiteboard browse
 
-`browse` starts the managed daemon if needed and invokes the browser launcher
-every time. It does not automatically switch the selected session. Choose
-sessions from the sidebar. Since a generic OS browser launcher cannot reliably
-reuse an arbitrary existing tab, `browse` may open another tab; use `prepare`
-for the non-duplicating keep-alive-aware behavior.
+`browse` starts the managed daemon if needed and opens the empty landing page.
+Use the `viewer_url` returned by `prepare` to open a specific board. Since a
+generic OS browser launcher cannot reliably reuse an arbitrary existing tab,
+`browse` may open another tab; `prepare` is the keep-alive-aware path.
 
 The registry is a known-board index rather than an active/inactive session
-lifecycle. The viewer keeps known boards in one list and orders them by the
-latest modification time of each HTML file. Preparing the same provider,
-session, and cwd reuses the same file. Deletion is intentionally not automatic
-in this MVP.
+lifecycle. The viewer does not list or switch between registry entries; each
+viewer URL addresses one board. Preparing the same provider, session, and cwd
+reuses the same file. Deletion is intentionally not automatic in this MVP.
 
 To explicitly clean (delete) the HTML and its registry record:
 
@@ -104,21 +91,14 @@ To explicitly clean (delete) the HTML and its registry record:
 
 ## Browser viewer
 
-The first `prepare` automatically starts the daemon and opens the navigation shell
-when no viewer connection is present.
-The sidebar shows one compact chronological list keyed by the session-start cwd,
-and the main pane shows the selected whiteboard without a separate header. It
-live-reloads the selected HTML whiteboard. Artifact changes are detected by the
-daemon's filesystem watcher and pushed to the viewer for immediate reload; the
-sidebar is reordered at the same time. At daemon startup, only artifacts
-modified within roughly the last day are watched. Selecting a board adds its
-artifact to the watch set. A changed session that is not currently selected
-receives an unread marker until it is opened. Session preparation refreshes the
-sidebar but does not automatically switch the current selection. `prepare`
-reopens the viewer when its event connection is gone; `browse` deliberately
-invokes the browser launcher even when a viewer is already open. Browser/OS
-launchers cannot force reuse of an arbitrary already-open tab across all browser
-families, so keep-alive-aware preparation is the single-tab-friendly path.
+The first `prepare` automatically starts the daemon and opens the requested
+board when no viewer connection is present. The viewer is intentionally a
+single-board page with no sidebar or session switcher. The daemon watches
+artifacts modified within roughly the last day at startup and adds a board when
+its URL is displayed. Changes are pushed to the page for immediate reload.
+Browser/OS launchers cannot force reuse of an arbitrary already-open tab across
+all browser families, so keep-alive-aware preparation is the single-tab-friendly
+path.
 
 Manage the background daemon explicitly when needed:
 

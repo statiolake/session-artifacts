@@ -66,13 +66,13 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ProviderArg::Generic)]
         provider: ProviderArg,
     },
-    /// Install provider-specific global skills and hooks.
+    /// Install provider-specific opt-in skills without automatic hooks.
     Install {
         /// Install for both supported providers when omitted.
         #[arg(long, value_enum)]
         provider: Option<ProviderArg>,
     },
-    /// Remove provider-specific global skills and hooks.
+    /// Remove provider-specific skills and legacy matching hooks.
     Uninstall {
         /// Uninstall for both supported providers when omitted.
         #[arg(long, value_enum)]

@@ -8,17 +8,9 @@
     :root {
       color-scheme: light;
       --canvas: #eeece5;
-      --panel: #f7f6f1;
-      --panel-raised: #e5e2d9;
-      --inset: #e8e5dc;
       --ink: #293130;
-      --ink-secondary: #59635f;
-      --ink-muted: #7d8580;
-      --line: rgba(41,49,48,.16);
-      --line-soft: rgba(41,49,48,.09);
-      --focus: #176a83;
-      --positive: #27754f;
-      --warning: #a66d24;
+      --secondary: #59635f;
+      --marker: #176a83;
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 12px;
     }
@@ -30,158 +22,35 @@
       background: var(--canvas);
       -webkit-font-smoothing: antialiased;
     }
-    button, summary { font: inherit; }
-    button:focus-visible, summary:focus-visible {
-      outline: 2px solid var(--focus);
-      outline-offset: 2px;
-    }
-    .shell {
+    .empty {
       display: grid;
-      grid-template-columns: 272px minmax(0, 1fr);
-      width: 100%;
+      align-content: center;
+      width: min(560px, 100%);
       height: 100%;
-      min-height: 0;
+      margin: 0 auto;
+      padding: 24px;
     }
-    .sidebar {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: 0;
-      background: var(--panel);
-      border-right: 1px solid var(--line);
-    }
-    .section-label {
+    .empty-kicker {
+      margin-bottom: 9px;
+      color: var(--marker);
       font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      letter-spacing: .08em;
+      letter-spacing: .10em;
       text-transform: uppercase;
     }
-    .sessions {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: scroll;
-      padding: 8px 6px;
-      scrollbar-gutter: stable;
-      scrollbar-color: var(--panel-raised) transparent;
-      scrollbar-width: thin;
+    .empty h1 {
+      margin: 0 0 8px;
+      font-size: 25px;
+      font-weight: 650;
+      letter-spacing: -.045em;
+      line-height: 1;
     }
-    .sessions::-webkit-scrollbar { width: 8px; }
-    .sessions::-webkit-scrollbar-track { background: transparent; }
-    .sessions::-webkit-scrollbar-thumb {
-      min-height: 32px;
-      border: 2px solid transparent;
-      border-radius: 999px;
-      background: var(--panel-raised);
-      background-clip: padding-box;
-    }
-    .section-label {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 8px 5px;
-      color: var(--ink-muted);
-    }
-    .section-count {
-      color: var(--ink-secondary);
-      font-variant-numeric: tabular-nums;
-    }
-    .session-project {
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-      min-width: 0;
-      overflow: hidden;
-      margin-bottom: 3px;
-      color: var(--ink-muted);
-      letter-spacing: 0;
-      text-transform: none;
-    }
-    .group-name {
-      flex: none;
-      max-width: 45%;
-      overflow: hidden;
-      color: var(--ink-secondary);
-      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      letter-spacing: .04em;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .group-path {
-      min-width: 0;
-      overflow: hidden;
-      color: var(--ink-muted);
-      direction: ltr;
-      font: 10px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      text-align: left;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .session {
-      display: block;
-      width: 100%;
-      min-height: 58px;
-      padding: 6px 8px;
-      border: 1px solid transparent;
-      border-radius: 5px;
-      color: inherit;
-      text-align: left;
-      background: transparent;
-      cursor: pointer;
-      transition: background-color 140ms ease-out, border-color 140ms ease-out;
-    }
-    .session:hover { background: rgba(41,49,48,.045); }
-    .session.selected {
-      background: rgba(23,106,131,.08);
-      border-color: rgba(23,106,131,.25);
-    }
-    .session-title {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-      color: var(--ink);
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .session-title-text {
-      min-width: 0;
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .unread-mark {
-      order: -1;
-      flex: none;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--focus);
-      box-shadow: 0 0 0 2px rgba(23,106,131,.13);
-    }
-    .session-meta {
-      display: flex;
-      gap: 7px;
-      margin-top: 3px;
-      overflow: hidden;
-      color: var(--ink-muted);
-      font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      white-space: nowrap;
-    }
-    .session-meta span { overflow: hidden; text-overflow: ellipsis; }
-    .empty-side {
-      padding: 11px 8px 16px;
-      color: var(--ink-muted);
+    .empty p {
+      max-width: 430px;
+      margin: 0;
+      color: var(--secondary);
+      font-size: 13px;
       line-height: 1.5;
     }
-    .content {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: 0;
-      overflow: hidden;
-      background: var(--canvas);
-    }
-    .frame-wrap { position: relative; flex: 1; min-height: 0; }
     #artifact {
       display: none;
       width: 100%;
@@ -189,240 +58,66 @@
       border: 0;
       background: var(--canvas);
     }
-    .welcome {
-      display: grid;
-      align-content: center;
-      width: min(540px, 100%);
-      height: 100%;
-      margin: 0 auto;
-      padding: 24px;
-    }
-    .welcome-kicker {
-      margin-bottom: 9px;
-      color: var(--focus);
-      font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-      letter-spacing: .10em;
-      text-transform: uppercase;
-    }
-    .welcome h2 {
-      margin: 0 0 8px;
-      color: var(--ink);
-      font-size: 25px;
-      font-weight: 650;
-      letter-spacing: -.045em;
-      line-height: 1;
-      text-wrap: balance;
-    }
-    .welcome p {
-      max-width: 430px;
-      margin: 0;
-      color: var(--ink-secondary);
-      font-size: 13px;
-      line-height: 1.5;
-      text-wrap: pretty;
-    }
-    @media (max-width: 700px) {
-      .shell { grid-template-columns: 1fr; grid-template-rows: minmax(158px, 34vh) minmax(0, 1fr); }
-      .sidebar { min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); }
-      .sessions { padding: 6px; }
-      .session { min-height: 58px; padding-top: 5px; padding-bottom: 5px; }
-    }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <nav id="sessions" class="sessions" aria-label="Session whiteboards"></nav>
-    </aside>
-    <main class="content">
-      <div class="frame-wrap">
-        <section id="welcome" class="welcome">
-          <div>
-            <div class="welcome-kicker">Current context</div>
-            <h2>No whiteboard selected</h2>
-            <p>When an agent opens a session whiteboard, it will appear in the navigation rail. Select it to follow the live view.</p>
-          </div>
-        </section>
-        <iframe id="artifact" title="Session whiteboard"></iframe>
-      </div>
-    </main>
-  </div>
+  <main id="empty" class="empty">
+    <div>
+      <div class="empty-kicker">Session whiteboard</div>
+      <h1>No whiteboard selected</h1>
+      <p>Open the viewer URL returned by <code>session-whiteboard prepare</code> to show one whiteboard here.</p>
+    </div>
+  </main>
+  <iframe id="artifact" title="Session whiteboard"></iframe>
   <script>
-    const sessionList = document.querySelector('#sessions');
+    const empty = document.querySelector('#empty');
     const frame = document.querySelector('#artifact');
-    const welcome = document.querySelector('#welcome');
-    let sessions = [];
-    let selected = null;
+    const selected = new URLSearchParams(window.location.search).get('session');
     let selectedVersion = null;
-    let requestedSession = new URLSearchParams(window.location.search).get('session');
-    let eventsConnected = false;
-    const unread = new Set();
-    const readVersions = new Map();
 
-    try {
-      const saved = JSON.parse(localStorage.getItem('session-whiteboard-read-versions') || '{}');
-      Object.keys(saved).forEach(function(key) { readVersions.set(key, saved[key]); });
-    } catch (_) {}
-
-    function esc(value) {
-      return String(value).replace(/[&<>'"]/g, function(c) {
-        return {'&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'}[c];
-      });
+    function artifactUrl() {
+      return '/session/' + encodeURIComponent(selected) + '?t=' + Date.now();
     }
 
-    function versionTime(session) {
-      const value = String(session.version || '').split('-', 1)[0];
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
-    }
-
-    function renderSessionRows(items) {
-      return items.map(function(s) {
-        const isUnread = unread.has(s.key);
-        const cwd = String(s.cwd || '');
-        const normalized = cwd.replace(/[\\/]+$/, '');
-        const projectName = normalized.split(/[\\/]/).pop() || normalized || '(unknown)';
-        const selectButton = '<button class="session ' + (s.key === selected ? 'selected' : '') +
-          '" data-key="' + esc(s.key) + '" aria-pressed="' + (s.key === selected ? 'true' : 'false') + '">' +
-          '<div class="session-project" title="' + esc(cwd) + '"><span class="group-name">' + esc(projectName) +
-          '</span><span class="group-path">' + esc(cwd) + '</span></div>' +
-          '<div class="session-title">' + (isUnread ? '<span class="unread-mark" title="Updated since last open" aria-label="Updated since last open"></span>' : '') +
-          '<span class="session-title-text">' + esc(s.title || 'Untitled session') + '</span></div>' +
-          '<div class="session-meta"><span>' + esc(s.provider) + '</span><span>' +
-          esc(String(s.session_id || '').slice(0, 8)) + '</span></div>' +
-          '</button>';
-        return selectButton;
-      }).join('');
-    }
-
-    function bindSessionButtons() {
-      sessionList.querySelectorAll('.session').forEach(function(button) {
-        button.addEventListener('click', function() { select(button.dataset.key); });
-      });
-    }
-
-    function renderSessions() {
-      if (!sessions.length) {
-        sessionList.innerHTML = '<div class="section-label"><span>Sessions</span><span class="section-count">0</span></div>' +
-          '<div class="empty-side">No session whiteboards yet.</div>';
-        return;
-      }
-      sessionList.innerHTML =
-        '<div class="section-label"><span>Sessions</span><span class="section-count">' + sessions.length + '</span></div>' +
-        renderSessionRows(sessions);
-      bindSessionButtons();
-    }
-
-    function persistReadVersions() {
-      try {
-        const values = {};
-        readVersions.forEach(function(version, key) { values[key] = version; });
-        localStorage.setItem('session-whiteboard-read-versions', JSON.stringify(values));
-      } catch (_) {}
-    }
-
-    function markRead(key, version) {
-      if (!key || !version) return;
-      unread.delete(key);
-      readVersions.set(key, version);
-      persistReadVersions();
-    }
-
-    function reconcileUnread() {
-      sessions.forEach(function(session) {
-        const seen = readVersions.get(session.key);
-        if (seen && seen !== session.version && session.key !== selected) unread.add(session.key);
-        if (session.key === selected) markRead(session.key, session.version);
-      });
-    }
-
-    async function loadSessions() {
-      try {
-        const response = await fetch('/api/sessions', { cache: 'no-store' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        sessions = await response.json();
-        sessions.sort(function(a, b) {
-          return versionTime(b) - versionTime(a) || Number(b.updated_at || 0) - Number(a.updated_at || 0) ||
-            String(a.key).localeCompare(String(b.key));
-        });
-        reconcileUnread();
-        renderSessions();
-        if (requestedSession && sessions.some(function(s) { return s.key === requestedSession; })) {
-          const key = requestedSession;
-          requestedSession = null;
-          await select(key);
-        }
-        if (selected && !sessions.some(function(s) { return s.key === selected; })) {
-          selected = null;
-          selectedVersion = null;
-          frame.style.display = 'none';
-          welcome.style.display = 'grid';
-        }
-      } catch (_) {}
-    }
-
-    async function select(key) {
-      selected = key;
-      const session = sessions.find(function(s) { return s.key === key; });
-      if (session) markRead(session.key, session.version);
-      selectedVersion = null;
-      history.replaceState(null, '', '/?session=' + encodeURIComponent(key));
-      await fetch('/api/viewer/select', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({key: key})
-      }).catch(function() {});
-      frame.src = '/session/' + encodeURIComponent(key) + '?t=' + Date.now();
+    function showArtifact() {
+      frame.src = artifactUrl();
       frame.style.display = 'block';
-      welcome.style.display = 'none';
-      renderSessions();
-      await checkVersion(true);
+      empty.style.display = 'none';
     }
 
     async function checkVersion(force) {
       if (!selected) return;
       try {
-        const response = await fetch('/api/sessions/' + encodeURIComponent(selected) + '/version', { cache: 'no-store' });
+        const response = await fetch('/api/sessions/' + encodeURIComponent(selected) + '/version', {cache: 'no-store'});
         if (!response.ok) return;
         const version = await response.text();
-        if (force || (selectedVersion && selectedVersion !== version)) {
-          frame.src = '/session/' + encodeURIComponent(selected) + '?t=' + Date.now();
-        }
+        if (force || (selectedVersion && selectedVersion !== version)) showArtifact();
         selectedVersion = version;
       } catch (_) {}
     }
 
     async function connectEvents() {
-      while (true) {
+      while (selected) {
         try {
-          const response = await fetch('/api/events', { cache: 'no-store' });
+          const response = await fetch('/api/events', {cache: 'no-store'});
           if (!response.ok) throw new Error('HTTP ' + response.status);
-          eventsConnected = true;
           const event = await response.json();
-          if (event.type === 'artifact_updated' && event.key) {
-            if (event.key === selected) {
-              markRead(event.key, event.version);
-              await checkVersion(true);
-            } else {
-              unread.add(event.key);
-            }
+          if (event.type === 'artifact_updated' && event.key === selected) {
+            selectedVersion = event.version || selectedVersion;
+            showArtifact();
           }
-          await loadSessions();
         } catch (_) {
-          eventsConnected = false;
           await new Promise(function(resolve) { setTimeout(resolve, 1500); });
         }
       }
     }
 
-    loadSessions();
-    connectEvents();
-    setInterval(function() {
-      if (!eventsConnected) {
-        loadSessions();
-        checkVersion(false);
-      }
-    }, 2000);
+    if (selected) {
+      showArtifact();
+      checkVersion(false);
+      connectEvents();
+      setInterval(function() { checkVersion(false); }, 2000);
+    }
   </script>
 </body>
 </html>

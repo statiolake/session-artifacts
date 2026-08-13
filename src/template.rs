@@ -3,7 +3,7 @@ pub const SESSION_TEMPLATE: &str = r##"<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- session-whiteboard: <title> is the sidebar title and must be updated with the document. -->
+  <!-- session-whiteboard: <title> names this board in the browser document. -->
   <title>New session</title>
   <style>
     :root {

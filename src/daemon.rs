@@ -15,7 +15,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::model::{
     BrowseResponse, CleanResponse, DaemonInfo, HealthResponse, PrepareResponse, Registry,
-    SessionRecord, SessionRequest, ViewerSelectRequest,
+    SessionRecord, SessionRequest,
 };
 use crate::storage;
 
@@ -310,10 +310,6 @@ fn respond_events(
     result
 }
 
-fn publish_sessions_changed(events: &EventHub) {
-    events.publish(json!({"type": "sessions_changed"}));
-}
-
 fn handle_request(
     mut request: Request,
     state: Arc<Mutex<AppState>>,
@@ -355,33 +351,10 @@ fn handle_request(
                 })?,
             )
         }
-        (Method::Post, "/api/viewer/select") => {
-            let mut body = String::new();
-            request.as_reader().read_to_string(&mut body)?;
-            let selection: ViewerSelectRequest = serde_json::from_str(&body)?;
-            let state = state.lock().map_err(|_| "daemon state lock poisoned")?;
-            let Some(record) = storage::find_record(&state.registry, &selection.key).cloned()
-            else {
-                return respond_error(request, 404, "unknown session");
-            };
-            if let Ok(mut watcher) = state.watcher.lock()
-                && let Err(error) = watcher.watch_record(&record)
-            {
-                eprintln!("session-whiteboard daemon: could not watch selected artifact: {error}");
-            }
-            respond_json(request, br#"{"ok":true}"#.to_vec())
-        }
         (Method::Post, "/api/daemon/stop") => {
             let response = respond_json(request, br#"{"ok":true}"#.to_vec());
             server.unblock();
             response
-        }
-        (Method::Get, "/api/sessions") => {
-            let state = state.lock().map_err(|_| "daemon state lock poisoned")?;
-            respond_json(
-                request,
-                serde_json::to_vec(&storage::session_summaries(&state.registry))?,
-            )
         }
         (Method::Post, "/api/sessions/prepare") => {
             let mut body = String::new();
@@ -398,13 +371,11 @@ fn handle_request(
             }
             let title = storage::read_title(&record.cwd.join(&record.artifact_path))
                 .unwrap_or_else(|_| "Untitled session".to_string());
-            let should_open_browser = state.events.should_open_browser(state.browser_opened);
-            let events = Arc::clone(&state.events);
             let viewer_url = viewer_url(port, &record.key);
-            if should_open_browser && open_browser(&viewer_root_url(port)) {
+            let should_open_browser = state.events.should_open_browser(state.browser_opened);
+            if should_open_browser && open_browser(&viewer_url) {
                 state.browser_opened = true;
             }
-            publish_sessions_changed(&events);
             let response = PrepareResponse {
                 provider: record.provider,
                 session_id: record.session_id,
@@ -423,8 +394,6 @@ fn handle_request(
             let mut state = state.lock().map_err(|_| "daemon state lock poisoned")?;
             let cleaned_record = storage::clean_record(&mut state.registry, &clean_request)?;
             storage::save_registry(&state.registry)?;
-            let events = Arc::clone(&state.events);
-            publish_sessions_changed(&events);
             let response = CleanResponse {
                 provider: clean_request.provider,
                 session_id: clean_request.session_id,
@@ -656,7 +625,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn viewer_url_points_to_navigation_shell_and_selects_session() {
+    fn viewer_url_points_to_one_session_board() {
         assert_eq!(
             viewer_url(43123, "codex-abc123"),
             "http://127.0.0.1:43123/?session=codex-abc123"

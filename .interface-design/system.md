@@ -45,15 +45,10 @@ panels, gradients, or decorative card borders.
 
 ## Composition
 
-- The viewer is a 272px navigation rail plus a fluid whiteboard pane. The rail
-  serves the board; it must not become a second competing canvas.
-- Keep the right pane free of persistent header chrome; the whiteboard starts at
-  the top edge and owns its own title. Use 8px internal controls where needed.
-- Keep the three-line session rows compact at roughly 56–60px with 4–8px
-  vertical rhythm. Do not add decorative status bullets to every row; the left
-  marker is reserved for meaningful unread state.
-- Navigation is one chronological list; active/inactive lifecycle state is not
-  a second grouping axis. File updates reorder the list immediately.
+- The viewer is one full-screen whiteboard addressed by a session-specific URL.
+  There is no navigation rail, session list, or cross-session switcher.
+- Keep the page free of persistent viewer chrome; the whiteboard starts at the
+  top edge and owns its own title. Use 8px internal controls where needed.
 - The whiteboard has one broad explanation field and no equal grid of generic
   cards. Use a narrow annotation margin when it helps; group related anchors
   tightly, then use a deliberate larger gap between topics. Keep the normal
@@ -64,7 +59,7 @@ panels, gradients, or decorative card borders.
   phrase. Information density and relationships matter more than theatrical
   emphasis.
 - Prefer weight and tone over large type. Use 10px tracked labels, 12px body,
-  13–16px section/value hierarchy, and tabular numbers for IDs and counters.
+ 13–16px section/value hierarchy, and tabular numbers for IDs and counters.
 - Favor native semantic controls and visible focus states. A compact button is
   still at least a 40px hit target.
 

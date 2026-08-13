@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 
-use crate::model::{Provider, Registry, SessionRecord, SessionRequest, SessionSummary};
+use crate::model::{Provider, Registry, SessionRecord, SessionRequest};
 use crate::template;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -221,45 +221,8 @@ pub fn clean_record(
     Ok(Some(record))
 }
 
-pub fn session_summaries(registry: &Registry) -> Vec<SessionSummary> {
-    let mut summaries = registry
-        .sessions
-        .iter()
-        .filter_map(|record| summarize(record).ok())
-        .collect::<Vec<_>>();
-    summaries.sort_by(|left, right| {
-        file_version_timestamp(&right.version)
-            .cmp(&file_version_timestamp(&left.version))
-            .then_with(|| right.updated_at.cmp(&left.updated_at))
-            .then_with(|| left.key.cmp(&right.key))
-    });
-    summaries
-}
-
-fn file_version_timestamp(version: &str) -> u128 {
-    version
-        .split_once('-')
-        .and_then(|(timestamp, _)| timestamp.parse().ok())
-        .unwrap_or_default()
-}
-
 pub fn find_record<'a>(registry: &'a Registry, key: &str) -> Option<&'a SessionRecord> {
     registry.sessions.iter().find(|record| record.key == key)
-}
-
-pub fn summarize(record: &SessionRecord) -> Result<SessionSummary> {
-    let absolute_path = record.cwd.join(&record.artifact_path);
-    let title = read_title(&absolute_path).unwrap_or_else(|_| "Untitled session".to_string());
-    Ok(SessionSummary {
-        key: record.key.clone(),
-        provider: record.provider.clone(),
-        session_id: record.session_id.clone(),
-        cwd: record.cwd.clone(),
-        artifact_path: record.artifact_path.clone(),
-        title,
-        updated_at: record.updated_at,
-        version: file_version(&absolute_path).unwrap_or_else(|_| "missing".to_string()),
-    })
 }
 
 pub fn file_version(path: &Path) -> Result<String> {
